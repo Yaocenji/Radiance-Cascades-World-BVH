@@ -1,0 +1,222 @@
+
+#pragma kernel CSMain
+
+// 摄像机矩阵
+float4x4 MatrixInvVP;
+float4x4 MatrixVP;
+
+// RC的分辨率
+uint2 _RCWB_CascadeResolution;
+// RC已经进行到了第几个阶段？
+uint _RCWB_CascadeLevel;
+// RC总共有多少个阶段？
+uint _RCWB_CascadeCount;
+// 射线最长的距离（世界空间的）
+float _RCWB_RayRange_WS;
+
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+#include "RCW_BVH_Inc.hlsl"
+
+TEXTURE2D(_RCWB_LastResult);
+SAMPLER(sampler_RCWB_LastResult);
+RWTexture2D <float4> Result;
+
+// 计算射线的起终点（世界空间）
+float2 CalculateRayRange(uint index, uint count)
+{
+    float maxValue = (1 << (count*2)) - 1;
+    float start = (1 << (index*2)) - 1;
+    float end = (1 << (index*2 + 2)) - 1;
+
+    float2 r = float2(start, end) / maxValue;
+    return r * _RCWB_RayRange_WS;
+}
+
+// 像素坐标和世界空间的转换
+float2 posPixel2World(float2 pixelPos, float2 screenParam)
+{
+    float2 uv = pixelPos / screenParam;
+    float2 ndc = uv * 2.0 - 1.0;
+    #if UNITY_UV_STARTS_AT_TOP
+    ndc.y = -ndc.y;
+    #endif
+    float deviceDepth = 0.0;
+    float4 clipPos = float4(ndc, deviceDepth, 1.0);
+    float4 posWSRaw = mul(MatrixInvVP, clipPos);
+    float2 posWS = posWSRaw.xy / posWSRaw.w;
+    return posWS;
+}
+float2 posWorld2Pixel(float3 worldPos, float2 screenParam)
+{
+    // 1. 世界空间 -> 裁剪空间 (Clip Space)
+    float4 clipPos = mul(MatrixVP, float4(worldPos, 1.0));
+    // 也可以使用 URP 内置函数: float4 clipPos = TransformWorldToHClip(worldPos);
+
+    // 2. 裁剪空间 -> NDC (-1 ~ 1)
+    float2 ndc = clipPos.xy / clipPos.w;
+
+    // 3. 处理平台差异 (Y轴翻转)
+    // 逻辑与 forward 函数完全一致：
+    // 如果之前为了匹配 NDC 翻转了 Y，现在为了变回屏幕 UV，需要再次翻转回来
+    #if UNITY_UV_STARTS_AT_TOP
+    ndc.y = -ndc.y;
+    #endif
+
+    // 4. NDC -> UV (0 ~ 1)
+    float2 uv = ndc * 0.5 + 0.5;
+
+    // 5. UV -> 屏幕像素坐标
+    float2 pixelPos = uv * screenParam;
+
+    return pixelPos;
+}
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    
+    // 先剔除越界线程（实际RC算法调度的线程数应该恰好整除16，不会有越界线程）
+    if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
+        return;
+
+    // 这一层的块数
+    uint blockSqrtCount = 1 << _RCWB_CascadeLevel;//Another way to write pow(2, _CascadeLevel)
+    // 这一层的一块的分辨率
+    float2 blockDim = _RCWB_CascadeResolution / blockSqrtCount;
+    // 这一层的块的坐标索引
+    uint2 block2DIndex = floor(id.xy / blockDim);
+    // 这一层的块的flatten索引
+    float blockFlattenIndex = block2DIndex.x + block2DIndex.y * blockSqrtCount;
+    // 这一层的块内像素坐标
+    float2 pixelPosInBlock = fmod(id.xy, blockDim);
+
+    // 计算世界空间坐标
+    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
+
+    // 计算屏幕中心点的世界空间坐标
+    float2 centerPosWS = posPixel2World((float2)_RCWB_CascadeResolution / 2.0f, (float2)_RCWB_CascadeResolution);
+    float2 center2currDir = normalize(posWS - centerPosWS);
+
+    // 测试射线与BVH求交
+    RayWS rayTest;
+    rayTest.Origin = centerPosWS;
+    rayTest.Direction = center2currDir;
+    IntersectsRaySegmentResult result1;
+    bool intTest1 = IntersectRayBVH(rayTest, result1);
+
+    
+    // 射线跨越距离
+    float2 rayRange = CalculateRayRange(_RCWB_CascadeLevel, _RCWB_CascadeCount);
+    
+    // 射线起始点（像素空间），是当前甜甜圈的中心点
+    float2 probeOriginPS = (pixelPosInBlock + 0.5) * blockSqrtCount;
+    // 转换到世界空间
+    float2 probeOriginWS = posPixel2World(probeOriginPS, _RCWB_CascadeResolution);
+
+    float4 finalResults = 0;
+    // 角度分辨率，每个block对应一个角度
+    float angleStep = TWO_PI / (blockSqrtCount * blockSqrtCount * 4);
+    
+    for (int i = 0; i < 4; ++i)
+    {
+        // 当前循环对应的角度索引
+        float angleIndex = blockFlattenIndex * 4 + i;
+        // 当前线程对应的角度
+        float currAngle = angleStep * (angleIndex + .5);
+        
+        // 根据角度计算世界空间方向
+        float2 rayDirectionWS = float2(cos(currAngle), sin(currAngle));
+
+        // 根据方向和range计算真正的起点
+        float2 realOriginWS = probeOriginWS + rayDirectionWS * rayRange.x;
+
+        // 建构射线
+        RayWS ray;
+        ray.Origin = realOriginWS;
+        ray.Direction = rayDirectionWS;
+        IntersectsRaySegmentResult result;
+        bool intRayBVH = IntersectRayBVH(ray, result);
+        // 修正1：距离修正，超出范围的不要管
+        if (intRayBVH && ( length(result.hitPoint - probeOriginWS) > rayRange.y))
+        {
+            intRayBVH = false;
+        }
+        // 修正2：法线修正，从物体内往外的不管
+        /*if (intRayBVH && dot(ray.Direction, result.hitNormal) > 0.0f)
+        {
+            intRayBVH = false;
+        }*/
+
+        // 通过求交结果采样颜色
+        float4 radiance;
+        if (intRayBVH && _RCWB_CascadeLevel != 0)
+        {
+            EdgeBVH edge = _BVH_Edge_Buffer[result.nodeIndex];
+            int materialIndex = edge.matIdx;
+            MaterialData mat = _BVH_Material_Buffer[materialIndex];
+            
+            // 获取该条曲线宽度
+            RayWS rayInterior;
+            float tolerance = .0001;
+            rayInterior.Origin = result.hitPoint + tolerance * ray.Direction;
+            rayInterior.Direction = ray.Direction;
+            IntersectsRaySegmentResult resultInterior;
+            bool intRayBVHInterior = IntersectRayBVH(rayInterior, resultInterior);
+            /*if (intRayBVHInterior)
+            {
+                float segmentTransmittance = exp(-length(resultInterior.hitPoint - result.hitPoint));
+                float3 segmentLight = mat.Emission.rgb * (1.0 - segmentTransmittance);
+                radiance = float4(segmentLight, 1 - segmentTransmittance);
+            }
+            else
+            {
+                radiance = float4(0, 0, 0, 0);
+            }*/
+            
+            radiance = float4(mat.Emission.xyz, 0);
+            //radiance = float4(edge.matIdx.xxx, 0);
+        }
+        else
+            radiance = float4(0, 0, 0, 1);
+
+        // 如果不是第一，那么  cascade merge
+        if (_RCWB_CascadeLevel != _RCWB_CascadeCount - 1)
+        {
+            // 计算上一层的对应坐标
+            // 在上一层的块内像素坐标，+.25是为了让位置在中间
+            float2 positionLast = pixelPosInBlock * 0.5 + 0.25;
+            // 对应的上一层的块本身的像素坐标偏移
+            float2 positionLastOffset = float2(fmod(angleIndex , blockSqrtCount * 2), floor(angleIndex / (blockSqrtCount * 2)));
+            // 把这个像素坐标clamp一下防止采样到隔壁的块
+            positionLast = clamp(positionLast, 0.5, blockDim * 0.5 - 0.5);
+            float2 samplePos = (positionLast + positionLastOffset * blockDim * 0.5);
+            float2 sampleUV = samplePos / _RCWB_CascadeResolution;
+            // 采样上一层的块
+            float4 rad = SAMPLE_TEXTURE2D_LOD(_RCWB_LastResult, sampler_RCWB_LastResult, sampleUV, 0);
+            // 
+            radiance.rgb += rad.rgb * radiance.a;
+            radiance.a *= rad.a;
+        }
+
+        finalResults += radiance * .25f;
+    }
+
+    Result[id.xy] = finalResults;
+
+    // debug
+    //Result[id.xy] = float4((float)id.x / (float)_RCWB_CascadeResolution.x,
+    //    (float)id.y / (float)_RCWB_CascadeResolution.y, 0, 1);
+    //Result[id.xy] = float4(coordsInBlock / blockDim, 0, 1);
+    //Result[id.xy] = float4(centerPosWS, 0, 1);
+    //Result[id.xy] = float4(center2currDir, 0, 1);
+    //Result[id.xy] = float4(intTest1, 0, 0, 1);
+    //Result[id.xy] = float4(rayOriginWS, 0, 1);
+    //Result[id.xy] = float4(currAngle, 0, 0, 1);
+    //Result[id.xy] = float4(intRayBVH, 0, 0, 1);
+    //Result[id.xy] = float4(rayRange, 0, 1);
+    //Result[id.xy] = float4(sampleUV, 0, 1);
+    //Result[id.xy] = float4(_RCWB_CascadeLevel, 0, 0, 1);
+    //Result[id.xy] = float4(result.hitNormal * .5 + .5, 0, 1);
+    //Result[id.xy] = intTest1 ? float4(result1.nodeIndex / 10.0f, 0, 0, 1) : 0;
+    
+}
