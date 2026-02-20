@@ -115,7 +115,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     // 转换到世界空间
     float2 probeOriginWS = posPixel2World(probeOriginPS, _RCWB_CascadeResolution);
 
-    float4 finalResults = 0;
+    min16float4 finalResults = 0;
     // 角度分辨率，每个block对应一个角度
     float angleStep = TWO_PI / (blockSqrtCount * blockSqrtCount * 4);
     
@@ -141,7 +141,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
         bool intRayBVH = IntersectRayBVHArray(ray, maxLightLength, results);
 
         // 通过求交结果采样颜色
-        float4 radiance;
+        min16float4 radiance;
         if (intRayBVH && _RCWB_CascadeLevel != 0)
         {
             // 步进区间
@@ -150,7 +150,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
             // 初始化的interval数据
             float2 currStart = ray.Origin;
             float2 currEnd = ray.Origin + ray.Direction * maxLightLength;
-            int currMatIdx = _BVH_Edge_Buffer[results.results[0].nodeIndex].matIdx;
+            int currMatIdx = GetMaterialIndex(_BVH_NodeEdge_Buffer[results.results[0].nodeIndex]);
 
             int intervalCount = 0;
             bool endflag = true;
@@ -174,7 +174,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
                 else
                 {
                     currStart = currResult.hitPoint;
-                    currMatIdx = _BVH_Edge_Buffer[currResult.nodeIndex].matIdx;
+                    currMatIdx = GetMaterialIndex(_BVH_NodeEdge_Buffer[currResult.nodeIndex]);
                     endflag = false;
                 }
             }
@@ -190,7 +190,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
             }
 
             // 遍历所有的积分区间
-            float4 defaultAnsRadiance = float4(0, 0, 0, 1);
+            min16float4 defaultAnsRadiance = float4(0, 0, 0, 1);
             int sampleCount = ceil(16 / intervalCount);
             for (int j = 0; j < intervalCount; ++j)
             {

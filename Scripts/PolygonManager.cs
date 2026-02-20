@@ -34,11 +34,27 @@ namespace RadianceCascadesWorldBVH
     }
     
     // 定义一个用于上传的结构，与 Shader 严格对应
+    /// <summary>
+    /// LBVHNodeGpu
+    /// PosA 如果不是叶节点，那么
+    /// </summary>
     public struct LBVHNodeGpu
     {
+        // 复用区域 1: 几何/空间信息 (16 bytes)
+        // 内部BVH节点: AABB Min xy
+        // 叶子BVH节点: Edge Start xy
         public Vector2 PosA;
+        // 复用区域 2: 几何/空间信息 (16 bytes)
+        // 内部BVH节点: AABB Max (xy)
+        // 叶子BVH节点: Edge End (xy)
         public Vector2 PosB;
+        // 复用区域 3: 索引/元数据 (4 bytes)
+        // 内部BVH节点: Left Child Index (>= 0) 左子的索引
+        // 叶子BVH节点: Bitwise NOT of Material Index (< 0) -> ~MatIdx 全部取反，作为材质的索引
         public int IndexData;
+        // 复用区域 4: 辅助索引 (4 bytes)
+        // 内部BVH节点: Right Child Index  右子的索引
+        // 叶子BVH节点: Unused (or Padding) 暂无用
         public int RightChild;
     }
         
@@ -102,6 +118,7 @@ namespace RadianceCascadesWorldBVH
         
         // BVH构建器
         private PolygonBVHConstructor bvhConstructor;
+        private PolygonBVHConstructorAccelerated bvhConstructorAccelerated;
         
         // 材质数据（与rcwObjects完全同序）
         private List<MaterialData> materialData = new List<MaterialData>();
@@ -109,6 +126,7 @@ namespace RadianceCascadesWorldBVH
         // compute buffer
         private ComputeBuffer edgeBuffer;
         private ComputeBuffer nodeBuffer;
+        private ComputeBuffer gpuNodeEdgeBuffer;
         private ComputeBuffer materialBuffer;
         
         // 辅助函数：计算多边形面积
@@ -130,6 +148,7 @@ namespace RadianceCascadesWorldBVH
         void Start()
         {
             bvhConstructor = new PolygonBVHConstructor(edges, spriteRenderers);
+            bvhConstructorAccelerated = new PolygonBVHConstructorAccelerated(edges, spriteRenderers);
         }
         
         /// <summary>
@@ -158,7 +177,7 @@ namespace RadianceCascadesWorldBVH
             // 重新生成材质数据
             GenerateMaterialData();
             
-            // 重新生成edges
+            /*// 重新生成edges
             bvhConstructor.GetBvhEdges();
             // 计算莫顿码
             bvhConstructor.CalculateMortonCodes(sceneAABB);
@@ -170,42 +189,67 @@ namespace RadianceCascadesWorldBVH
             bvhConstructor.RefitBVH();
             // 重排BFS
             bvhConstructor.ReorderBVHToBFS();
+            // 打包 GPU 数据
+            bvhConstructor.PackGpuNodes();*/
+            
+            bvhConstructorAccelerated.GetBvhEdges();
+            bvhConstructorAccelerated.CalculateMortonCodes(sceneAABB);
+            bvhConstructorAccelerated.SortMortonCodes();
+            bvhConstructorAccelerated.BuildBVHStructure();
+            bvhConstructorAccelerated.RefitBVH();
+            bvhConstructorAccelerated.ReorderBVHToBFS();
+            bvhConstructorAccelerated.PackGpuNodes();
 
-            UpdateBuffers(edges, bvhConstructor.nodes);
+            //UpdateBuffers(edges, bvhConstructor.nodes);
+            UpdateBuffers(edges, bvhConstructorAccelerated.nodes);
         }
         
         
         public void UpdateBuffers(List<edgeBVH> edges, LBVHNodeRaw[] nodes)
         {
-            // 1. 管理 Edge Buffer (叶子数据)
-            // 如果edges不为零，那么要准备合适的edges
-            if (edges.Count > 0)
-            {
-                // 如果 Buffer 不存在，或者长度不够，重新创建
-                if (edgeBuffer == null || edgeBuffer.count < edges.Count)
-                {
-                    edgeBuffer?.Release();
-                    // 建议：按 1.5 倍扩容，减少频繁分配
-                    int newSize = Mathf.CeilToInt(edges.Count * 1.2f); 
-                    int s = Marshal.SizeOf<edgeBVH>();
-                    edgeBuffer = new ComputeBuffer(newSize, s);
-                }
-                // 注意：由于 List 可能有冗余容量，转换为 Array 传入
-                edgeBuffer.SetData(edges.ToArray(), 0, 0, edges.Count);
-            }
+            // // 1. 管理 Edge Buffer (叶子数据)
+            // // 如果edges不为零，那么要准备合适的edges
+            // if (edges.Count > 0)
+            // {
+            //     // 如果 Buffer 不存在，或者长度不够，重新创建
+            //     if (edgeBuffer == null || edgeBuffer.count < edges.Count)
+            //     {
+            //         edgeBuffer?.Release();
+            //         // 建议：按 1.5 倍扩容，减少频繁分配
+            //         int newSize = Mathf.CeilToInt(edges.Count * 1.2f); 
+            //         int s = Marshal.SizeOf<edgeBVH>();
+            //         edgeBuffer = new ComputeBuffer(newSize, s);
+            //     }
+            //     // 注意：由于 List 可能有冗余容量，转换为 Array 传入
+            //     edgeBuffer.SetData(edges.ToArray(), 0, 0, edges.Count);
+            // }
 
-            // 2. 管理 Node Buffer (内部节点)
-            if (nodes != null && nodes.Length > 0)
+            // // 2. 管理 Node Buffer (内部节点)
+            // if (nodes != null && nodes.Length > 0)
+            // {
+            //     int nodeCount = nodes.Length;
+            //     if (nodeBuffer == null || nodeBuffer.count < nodeCount)
+            //     {
+            //         nodeBuffer?.Release();
+            //         int s = Marshal.SizeOf<LBVHNodeRaw>();
+            //         nodeBuffer = new ComputeBuffer(nodeCount, s); // 对应 NodeGPU 大小
+            //     }
+            //     //Debug.Log("nodeBuffer set.");
+            //     nodeBuffer.SetData(nodes, 0, 0, nodeCount);
+            // }
+            
+            // 2. 管理 GPU Node Edge Buffer (紧凑格式，内部节点+叶子边数据合并)
+            int gpuNodeCount = bvhConstructorAccelerated.GpuNodeCount;// bvhConstructor.GpuNodeCount;
+            if (gpuNodeCount > 0)
             {
-                int nodeCount = nodes.Length;
-                if (nodeBuffer == null || nodeBuffer.count < nodeCount)
+                if (gpuNodeEdgeBuffer == null || gpuNodeEdgeBuffer.count < gpuNodeCount)
                 {
-                    nodeBuffer?.Release();
-                    int s = Marshal.SizeOf<LBVHNodeRaw>();
-                    nodeBuffer = new ComputeBuffer(nodeCount, s); // 对应 NodeGPU 大小
+                    gpuNodeEdgeBuffer?.Release();
+                    int newSize = Mathf.NextPowerOfTwo(gpuNodeCount);
+                    int s = Marshal.SizeOf<LBVHNodeGpu>();
+                    gpuNodeEdgeBuffer = new ComputeBuffer(newSize, s);
                 }
-                //Debug.Log("nodeBuffer set.");
-                nodeBuffer.SetData(nodes, 0, 0, nodeCount);
+                gpuNodeEdgeBuffer.SetData(bvhConstructorAccelerated.gpuNodes/*bvhConstructor.gpuNodes*/, 0, 0, gpuNodeCount);
             }
             
             // 3. 管理 Material Buffer (材质数据)
@@ -221,17 +265,20 @@ namespace RadianceCascadesWorldBVH
                 materialBuffer.SetData(materialData.ToArray(), 0, 0, materialData.Count);
             }
             
-            Shader.SetGlobalBuffer("_BVH_Edge_Buffer", edgeBuffer);
-            Shader.SetGlobalBuffer("_BVH_Node_Buffer", nodeBuffer);
+            // Shader.SetGlobalBuffer("_BVH_Edge_Buffer", edgeBuffer);
+            // Shader.SetGlobalBuffer("_BVH_Node_Buffer", nodeBuffer);
+            Shader.SetGlobalBuffer("_BVH_NodeEdge_Buffer", gpuNodeEdgeBuffer);
             Shader.SetGlobalBuffer("_BVH_Material_Buffer", materialBuffer);
-            Shader.SetGlobalInt("_BVH_Root_Index", bvhConstructor.rootNodeIndex);
+            Shader.SetGlobalInt("_BVH_Root_Index", bvhConstructorAccelerated/*bvhConstructor*/.rootNodeIndex);
         }
 
-        public void Dispose()
+        public void OnDestroy()
         {
             edgeBuffer?.Release();
             nodeBuffer?.Release();
+            gpuNodeEdgeBuffer?.Release();
             materialBuffer?.Release();
+            bvhConstructorAccelerated?.Dispose();
         }
         
         
@@ -243,7 +290,7 @@ namespace RadianceCascadesWorldBVH
         /// <param name="depth">当前深度</param>
         private void DrawNodeRecursive(int nodeIndex, int depth)
         {
-            var bvhNodes = bvhConstructor.nodes;
+            var bvhNodes = bvhConstructorAccelerated/*bvhConstructor*/.nodes;
             
             // 越界保护
             if (nodeIndex < 0 || nodeIndex >= bvhNodes.Length) return;
@@ -317,9 +364,9 @@ namespace RadianceCascadesWorldBVH
             
             
             // 画BVH
-            if (bvhConstructor != null && bvhConstructor.nodes != null)
+            if (/*bvhConstructor*/bvhConstructorAccelerated != null && /*bvhConstructor*/bvhConstructorAccelerated.nodes != null)
             {
-                var bvhNodes = bvhConstructor.nodes;
+                var bvhNodes = /*bvhConstructor*/bvhConstructorAccelerated.nodes;
                 
                 // 1. 寻找根节点 (Parent 为 -1 的节点)
                 int rootIndex = -1;

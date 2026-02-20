@@ -15,8 +15,8 @@ namespace RadianceCascadesWorldBVH
         public LBVHNodeRaw[] nodes;
         public int rootNodeIndex;
         
-        // BVH数据加入GPU
-        public List<LBVHNodeGpu> gpuNodes;
+        // GPU 打包后的 BVH 数据（对外暴露，供 PolygonManager 上传）
+        public LBVHNodeGpu[] gpuNodes;
         
         // BVH中间数据（仅在构建过程中使用）
         private List<uint> mortonCodes = new List<uint>();
@@ -491,5 +491,68 @@ namespace RadianceCascadesWorldBVH
             // 6. 更新根节点索引
             rootNodeIndex = 0; // BFS 保证根节点永远在 0
         }
+        
+        
+        /// <summary>
+        /// 将 nodes 和 edges 数据打包到 gpuNodes，供 GPU 使用。
+        /// 按需分配内存，避免每帧重新分配。
+        /// 
+        /// 打包规则 (LBVHNodeGpu):
+        /// - 内部节点 (ObjectIndex == -1):
+        ///     PosA = AABB Min, PosB = AABB Max
+        ///     IndexData = LeftChild (>= 0), RightChild = RightChild
+        /// - 叶子节点 (ObjectIndex != -1):
+        ///     PosA = Edge Start, PosB = Edge End
+        ///     IndexData = ~MatIdx (< 0, 按位取反), RightChild = 0 (未使用)
+        /// </summary>
+        public void PackGpuNodes()
+        {
+            if (nodes == null || nodes.Length == 0)
+            {
+                gpuNodes = null;
+                return;
+            }
+
+            int nodeCount = nodes.Length;
+
+            // 按需分配内存：仅当容量不足时扩容
+            if (gpuNodes == null || gpuNodes.Length < nodeCount)
+            {
+                int newSize = Mathf.NextPowerOfTwo(nodeCount);
+                gpuNodes = new LBVHNodeGpu[newSize];
+            }
+
+            // 遍历所有节点进行打包
+            for (int i = 0; i < nodeCount; i++)
+            {
+                LBVHNodeRaw node = nodes[i];
+                LBVHNodeGpu gpuNode;
+
+                if (node.ObjectIndex == -1)
+                {
+                    // === 内部节点 ===
+                    gpuNode.PosA = node.Min;
+                    gpuNode.PosB = node.Max;
+                    gpuNode.IndexData = node.LeftChild;
+                    gpuNode.RightChild = node.RightChild;
+                }
+                else
+                {
+                    // === 叶子节点 ===
+                    edgeBVH edge = edges[node.ObjectIndex];
+                    gpuNode.PosA = edge.start;
+                    gpuNode.PosB = edge.end;
+                    gpuNode.IndexData = ~edge.matIdx; // 按位取反，结果 < 0
+                    gpuNode.RightChild = 0;
+                }
+
+                gpuNodes[i] = gpuNode;
+            }
+        }
+        
+        /// <summary>
+        /// 获取实际有效的 GPU 节点数量（用于 SetData 时指定 count）
+        /// </summary>
+        public int GpuNodeCount => nodes?.Length ?? 0;
     }
 }
