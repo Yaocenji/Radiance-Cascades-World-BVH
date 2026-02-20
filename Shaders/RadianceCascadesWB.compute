@@ -103,6 +103,8 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     rayTest.Direction = center2currDir;
     IntersectsRaySegmentResult result1;
     bool intTest1 = IntersectRayBVH(rayTest, result1);
+    IntersectsRaySegmentResultArray result2;
+    bool intTest2 = IntersectRayBVHArray(rayTest, length(centerPosWS - posWS), result2);
 
     
     // 射线跨越距离
@@ -134,34 +136,77 @@ void CSMain (uint3 id : SV_DispatchThreadID)
         RayWS ray;
         ray.Origin = realOriginWS;
         ray.Direction = rayDirectionWS;
-        IntersectsRaySegmentResult result;
-        bool intRayBVH = IntersectRayBVH(ray, result);
-        // 修正1：距离修正，超出范围的不要管
-        if (intRayBVH && ( length(result.hitPoint - probeOriginWS) > rayRange.y))
-        {
-            intRayBVH = false;
-        }
-        // 修正2：法线修正，从物体内往外的不管
-        /*if (intRayBVH && dot(ray.Direction, result.hitNormal) > 0.0f)
-        {
-            intRayBVH = false;
-        }*/
+        IntersectsRaySegmentResultArray results;
+        float maxLightLength = rayRange.y - rayRange.x;
+        bool intRayBVH = IntersectRayBVHArray(ray, maxLightLength, results);
 
         // 通过求交结果采样颜色
         float4 radiance;
         if (intRayBVH && _RCWB_CascadeLevel != 0)
         {
-            EdgeBVH edge = _BVH_Edge_Buffer[result.nodeIndex];
-            int materialIndex = edge.matIdx;
-            MaterialData mat = _BVH_Material_Buffer[materialIndex];
-            
-            // 获取该条曲线宽度
-            RayWS rayInterior;
-            float tolerance = .0001;
-            rayInterior.Origin = result.hitPoint + tolerance * ray.Direction;
-            rayInterior.Direction = ray.Direction;
-            IntersectsRaySegmentResult resultInterior;
-            bool intRayBVHInterior = IntersectRayBVH(rayInterior, resultInterior);
+            // 步进区间
+            RayMarchingInterval intervals[MAX_RAYMARCHING_INTERVALS];
+
+            // 初始化的interval数据
+            float2 currStart = ray.Origin;
+            float2 currEnd = ray.Origin + ray.Direction * maxLightLength;
+            int currMatIdx = _BVH_Edge_Buffer[results.results[0].nodeIndex].matIdx;
+
+            int intervalCount = 0;
+            bool endflag = true;
+            for (int j = 0; j < results.intersectsCount; ++j)
+            {
+                IntersectsRaySegmentResult currResult = results.results[j];
+                
+                // 当前点是出点，
+                if (dot(currResult.hitNormal, ray.Direction) > 0.0)
+                {
+                    currEnd = currResult.hitPoint;
+                    
+                    // 和入点一起组成一个区间
+                    intervals[intervalCount].start = currStart;
+                    intervals[intervalCount].end = currEnd;
+                    intervals[intervalCount].matIdx = currMatIdx;
+                    endflag = true;
+                    intervalCount++;
+                }
+                // 否则是入点
+                else
+                {
+                    currStart = currResult.hitPoint;
+                    currMatIdx = _BVH_Edge_Buffer[currResult.nodeIndex].matIdx;
+                    endflag = false;
+                }
+            }
+            // 特判：如果循环结束了endflag却是false，那么说明区间开放了
+            if (endflag == false)
+            {
+                currEnd = ray.Origin + ray.Direction * maxLightLength;
+                intervals[intervalCount].start = currStart;
+                intervals[intervalCount].end = currEnd;
+                intervals[intervalCount].matIdx = currMatIdx;
+                endflag = true;
+                intervalCount++;
+            }
+
+            // 遍历所有的积分区间
+            float4 defaultAnsRadiance = float4(0, 0, 0, 1);
+            int sampleCount = ceil(16 / intervalCount);
+            for (int j = 0; j < intervalCount; ++j)
+            {
+                RayMarchingInterval currInterval = intervals[j];
+                MaterialData currMatData = _BVH_Material_Buffer[currInterval.matIdx];
+                
+                float dist = length(currInterval.end - currInterval.start);
+                float segmentTransmittance = exp(-dist * currMatData.Density);
+                
+                float3 segmentLight = currMatData.Emission.rgb * defaultAnsRadiance.w;
+                
+                defaultAnsRadiance.xyz += segmentLight;
+                defaultAnsRadiance.w *= segmentTransmittance;
+                if (defaultAnsRadiance.w < 0.001) break; 
+            }
+            radiance = defaultAnsRadiance;
             /*if (intRayBVHInterior)
             {
                 float segmentTransmittance = exp(-length(resultInterior.hitPoint - result.hitPoint));
@@ -173,12 +218,13 @@ void CSMain (uint3 id : SV_DispatchThreadID)
                 radiance = float4(0, 0, 0, 0);
             }*/
             
-            radiance = float4(mat.Emission.xyz, 0);
+            //radiance = float4(mat.Emission.xyz, 0);
             //radiance = float4(edge.matIdx.xxx, 0);
         }
         else
             radiance = float4(0, 0, 0, 1);
 
+        
         // 如果不是第一，那么  cascade merge
         if (_RCWB_CascadeLevel != _RCWB_CascadeCount - 1)
         {
@@ -217,6 +263,6 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     //Result[id.xy] = float4(sampleUV, 0, 1);
     //Result[id.xy] = float4(_RCWB_CascadeLevel, 0, 0, 1);
     //Result[id.xy] = float4(result.hitNormal * .5 + .5, 0, 1);
-    //Result[id.xy] = intTest1 ? float4(result1.nodeIndex / 10.0f, 0, 0, 1) : 0;
-    
+    //Result[id.xy] = intTest1 ? (dot(result1.hitNormal, center2currDir) > 0.0 ? float4(0, 0, 1, 1) : float4(1, 0, 0, 1)) : 0;
+    //Result[id.xy] = intTest2 ? float4(result2.intersectsCount / 6.0f, 0, 0, 1) : 0;
 }

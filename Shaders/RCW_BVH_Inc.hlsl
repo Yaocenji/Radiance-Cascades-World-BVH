@@ -232,3 +232,157 @@ bool IntersectRayBVH(RayWS ray, out IntersectsRaySegmentResult result)
     return hitFound;
 }
 
+#define MAX_INTERSECTS 4
+struct IntersectsRaySegmentResultArray
+{
+    int intersectsCount;
+    IntersectsRaySegmentResult results[MAX_INTERSECTS];
+};
+
+// =========================================================
+// 核心实现：带最大距离限制的 BVH 射线求交（收集多个交点）
+// =========================================================
+bool IntersectRayBVHArray(RayWS ray, float maxDistance, out IntersectsRaySegmentResultArray result)
+{
+    // 1. 初始化结果
+    result.intersectsCount = 0;
+    
+    // 【关键修改】使用 [unroll] 确保初始化循环展开
+    [unroll]
+    for (int i = 0; i < MAX_INTERSECTS; i++)
+    {
+        result.results[i].hitPoint = float2(0, 0);
+        result.results[i].hitNormal = float2(0, 0);
+        result.results[i].nodeIndex = -1;
+    }
+
+    // 辅助数组：用于存储距离
+    float hitDistances[MAX_INTERSECTS]; 
+    [unroll]
+    for(int j = 0; j < MAX_INTERSECTS; j++) hitDistances[j] = 1e30;
+
+    if (_BVH_Root_Index == -1)
+        return false;
+
+    // 栈
+    int nodeStack[MAX_RECUR_DEEP];
+    int stackTop = 0;
+    nodeStack[0] = _BVH_Root_Index;
+
+    // 4. 开始遍历 (外层保持 loop，处理不确定的树深)
+    [loop]
+    while (stackTop >= 0)
+    {
+        int nodeIdx = nodeStack[stackTop];
+        stackTop--;
+
+        if (nodeIdx == -1) continue;
+
+        // 获取节点数据
+        LBVHNode node = _BVH_Node_Buffer[nodeIdx];
+
+        if (!IntersectsRayAABB(ray, node))
+        {
+            continue;
+        }
+
+        if (node.ObjectIndex != -1)
+        {
+            EdgeBVH edge = _BVH_Edge_Buffer[node.ObjectIndex];
+            IntersectsRaySegmentResult tempResult;
+
+            if (IntersectsRaySegment(ray, edge, tempResult))
+            {
+                float dist = distance(ray.Origin, tempResult.hitPoint);
+
+                // 剔除逻辑
+                if (dist > maxDistance) continue;
+                if (result.intersectsCount == MAX_INTERSECTS && dist >= hitDistances[MAX_INTERSECTS - 1])
+                {
+                    continue;
+                }
+
+                // =================================================
+                // 【核心修复】GPU 友好的插入排序
+                // 消除所有对局部数组的动态索引访问 (Variable Indexing)
+                // =================================================
+
+                // 1. 寻找插入位置
+                int insertPos = result.intersectsCount;
+                
+                // 使用 [unroll] 强制展开，边界使用常量 MAX_INTERSECTS
+                [unroll]
+                for (int k = 0; k < MAX_INTERSECTS; k++)
+                {
+                    // 只要发现比当前距离大的位置，就尝试更新 insertPos
+                    // 因为数组是有序的，第一个满足条件的就是正确位置，min 保证了锁定第一个
+                    if (dist < hitDistances[k])
+                    {
+                        insertPos = min(insertPos, k);
+                    }
+                }
+
+                if (insertPos < MAX_INTERSECTS)
+                {
+                    // 2. 元素后移 (Shift)
+                    // 从后向前遍历，同样使用常量边界 + 条件赋值
+                    [unroll]
+                    for (int m = MAX_INTERSECTS - 1; m > 0; m--)
+                    {
+                        // 只有在插入点之后的元素才需要移动
+                        // 编译器会将其转化为条件传送指令 (movc)，避免动态索引
+                        if (m > insertPos)
+                        {
+                            result.results[m] = result.results[m-1];
+                            hitDistances[m] = hitDistances[m-1];
+                        }
+                    }
+
+                    // 3. 填入新数据
+                    // 避免使用 result.results[insertPos] = ... 这种动态写入
+                    // 而是遍历所有槽位，只写入匹配的那个
+                    [unroll]
+                    for (int n = 0; n < MAX_INTERSECTS; n++)
+                    {
+                        if (n == insertPos)
+                        {
+                            result.results[n] = tempResult;
+                            result.results[n].nodeIndex = node.ObjectIndex;
+                            hitDistances[n] = dist;
+                        }
+                    }
+
+                    // 4. 更新计数
+                    if (result.intersectsCount < MAX_INTERSECTS)
+                        result.intersectsCount++;
+                }
+            }
+        }
+        else
+        {
+            if (stackTop < MAX_RECUR_DEEP - 2)
+            {
+                stackTop++;
+                nodeStack[stackTop] = node.LeftChild;
+                stackTop++;
+                nodeStack[stackTop] = node.RightChild;
+            }
+        }
+    }
+
+    return (result.intersectsCount > 0);
+}
+
+// 重载保持不变
+bool IntersectRayBVHArray(RayWS ray, out IntersectsRaySegmentResultArray result)
+{
+    return IntersectRayBVHArray(ray, 1e30, result);
+}
+
+#define MAX_RAYMARCHING_INTERVALS 4
+struct RayMarchingInterval
+{
+    int matIdx;
+    float2 start;
+    float2 end;
+};

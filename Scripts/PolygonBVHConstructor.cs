@@ -12,12 +12,20 @@ namespace RadianceCascadesWorldBVH
         private List<SpriteRenderer> spriteRenderers;
         
         // BVH结果数据（对外暴露，PolygonManager需要用于GPU上传和绘制）
-        public LBVHNode[] nodes;
+        public LBVHNodeRaw[] nodes;
         public int rootNodeIndex;
+        
+        // BVH数据加入GPU
+        public List<LBVHNodeGpu> gpuNodes;
         
         // BVH中间数据（仅在构建过程中使用）
         private List<uint> mortonCodes = new List<uint>();
         private List<int> index = new List<int>();
+        
+        // 重拍node
+        private LBVHNodeRaw[] _tempSortedNodes; // 用于暂存重排后的节点
+        private int[] _indexMap;             // 用于映射 OldIndex -> NewIndex
+        private int[] _bfsQueue;             // 用数组模拟队列
         
         public PolygonBVHConstructor(List<edgeBVH> edges, List<SpriteRenderer> spriteRenderers)
         {
@@ -198,139 +206,139 @@ namespace RadianceCascadesWorldBVH
         /// 生成层次结构
         /// </summary>
         public void BuildBVHStructure()
+        {
+            int numPrimitives = mortonCodes.Count;
+            if (numPrimitives == 0) return;
+
+            // 分配节点内存：N个叶子 + N-1个内部节点
+            int numNodes = 2 * numPrimitives - 1;
+            nodes = new LBVHNodeRaw[numNodes];
+
+            // 初始化所有节点的父节点为 -1
+            for (int i = 0; i < numNodes; i++)
             {
-                int numPrimitives = mortonCodes.Count;
-                if (numPrimitives == 0) return;
+                nodes[i].Parent = -1;
+                nodes[i].LeftChild = -1;
+                nodes[i].RightChild = -1;
+                nodes[i].ObjectIndex = -1;
+            }
 
-                // 分配节点内存：N个叶子 + N-1个内部节点
-                int numNodes = 2 * numPrimitives - 1;
-                nodes = new LBVHNode[numNodes];
+            // 1. 并行循环的串行化：处理每一个内部节点
+            // 内部节点由索引 i (0 到 numPrimitives - 2) 生成
+            // 在 nodes 数组中，它们位于 numPrimitives + i
+            for (int i = 0; i < numPrimitives - 1; i++)
+            {
+                // --- 下面是 Karras 算法的核心逻辑 ---
 
-                // 初始化所有节点的父节点为 -1
-                for (int i = 0; i < numNodes; i++)
+                // 确定方向 d (+1 或 -1)
+                int d = (GetLongestCommonPrefix(i, i + 1, numPrimitives) - GetLongestCommonPrefix(i, i - 1, numPrimitives)) > 0 ? 1 : -1;
+
+                // 计算当前节点 i 的最小 LCP (Longest Common Prefix)
+                int minDelta = GetLongestCommonPrefix(i, i - d, numPrimitives);
+
+                // 确定范围的另一端 l_max
+                int lMax = 2;
+                while (GetLongestCommonPrefix(i, i + lMax * d, numPrimitives) > minDelta)
                 {
-                    nodes[i].Parent = -1;
-                    nodes[i].LeftChild = -1;
-                    nodes[i].RightChild = -1;
-                    nodes[i].ObjectIndex = -1;
+                    lMax *= 2;
                 }
 
-                // 1. 并行循环的串行化：处理每一个内部节点
-                // 内部节点由索引 i (0 到 numPrimitives - 2) 生成
-                // 在 nodes 数组中，它们位于 numPrimitives + i
-                for (int i = 0; i < numPrimitives - 1; i++)
+                // 二分查找精确的另一端 j
+                int l = 0;
+                for (int t = lMax / 2; t >= 1; t /= 2)
                 {
-                    // --- 下面是 Karras 算法的核心逻辑 ---
-
-                    // 确定方向 d (+1 或 -1)
-                    int d = (GetLongestCommonPrefix(i, i + 1, numPrimitives) - GetLongestCommonPrefix(i, i - 1, numPrimitives)) > 0 ? 1 : -1;
-
-                    // 计算当前节点 i 的最小 LCP (Longest Common Prefix)
-                    int minDelta = GetLongestCommonPrefix(i, i - d, numPrimitives);
-
-                    // 确定范围的另一端 l_max
-                    int lMax = 2;
-                    while (GetLongestCommonPrefix(i, i + lMax * d, numPrimitives) > minDelta)
+                    if (GetLongestCommonPrefix(i, i + (l + t) * d, numPrimitives) > minDelta)
                     {
-                        lMax *= 2;
+                        l += t;
                     }
+                }
+                int j = i + l * d;
 
-                    // 二分查找精确的另一端 j
-                    int l = 0;
-                    for (int t = lMax / 2; t >= 1; t /= 2)
+                // 寻找分割点 gamma
+                int deltaNode = GetLongestCommonPrefix(i, j, numPrimitives);
+                int s = 0;
+                int first = Math.Min(i, j);
+                int last = Math.Max(i, j);
+                
+                int split = first;
+                int step = last - first;
+
+                do
+                {
+                    step = (step + 1) >> 1; // ceil(step / 2)
+                    int newSplit = split + step;
+                    if (newSplit < last)
                     {
-                        if (GetLongestCommonPrefix(i, i + (l + t) * d, numPrimitives) > minDelta)
+                        if (GetLongestCommonPrefix(first, newSplit, numPrimitives) > deltaNode)
                         {
-                            l += t;
+                            split = newSplit;
                         }
                     }
-                    int j = i + l * d;
+                } while (step > 1);
 
-                    // 寻找分割点 gamma
-                    int deltaNode = GetLongestCommonPrefix(i, j, numPrimitives);
-                    int s = 0;
-                    int first = Math.Min(i, j);
-                    int last = Math.Max(i, j);
-                    
-                    int split = first;
-                    int step = last - first;
+                // split 就是 gamma，范围被分为 [first, split] 和 [split+1, last]
 
-                    do
-                    {
-                        step = (step + 1) >> 1; // ceil(step / 2)
-                        int newSplit = split + step;
-                        if (newSplit < last)
-                        {
-                            if (GetLongestCommonPrefix(first, newSplit, numPrimitives) > deltaNode)
-                            {
-                                split = newSplit;
-                            }
-                        }
-                    } while (step > 1);
+                // --- 构建拓扑连接 ---
 
-                    // split 就是 gamma，范围被分为 [first, split] 和 [split+1, last]
+                // 当前内部节点在数组中的真实索引
+                int currentNodeIdx = numPrimitives + i;
 
-                    // --- 构建拓扑连接 ---
+                int leftIdx = split;
+                int rightIdx = split + 1;
 
-                    // 当前内部节点在数组中的真实索引
-                    int currentNodeIdx = numPrimitives + i;
-
-                    int leftIdx = split;
-                    int rightIdx = split + 1;
-
-                    // 处理左孩子
-                    // 如果左范围只包含一个元素，则是叶子；否则是内部节点
-                    // 在我们的数组映射中：
-                    //   叶子索引直接是 [0...N-1]
-                    //   内部节点索引是 N + 逻辑索引
-                    // Karras算法有个特性：内部节点 k 负责分割以 k 开始的范围。
-                    // 所以如果孩子是内部节点，它的逻辑索引就是 leftIdx (即 split)
-                    
-                    int leftChildNodeIdx;
-                    if (Math.Min(i, j) == leftIdx)
-                    {
-                        // 左孩子是叶子
-                        leftChildNodeIdx = leftIdx; 
-                    }
-                    else
-                    {
-                        // 左孩子是内部节点
-                        leftChildNodeIdx = numPrimitives + leftIdx; 
-                    }
-
-                    // 处理右孩子
-                    int rightChildNodeIdx;
-                    if (Math.Max(i, j) == rightIdx)
-                    {
-                        // 右孩子是叶子
-                        rightChildNodeIdx = rightIdx;
-                    }
-                    else
-                    {
-                        // 右孩子是内部节点
-                        rightChildNodeIdx = numPrimitives + rightIdx;
-                    }
-
-                    // 建立连接
-                    nodes[currentNodeIdx].LeftChild = leftChildNodeIdx;
-                    nodes[currentNodeIdx].RightChild = rightChildNodeIdx;
-
-                    nodes[leftChildNodeIdx].Parent = currentNodeIdx;
-                    nodes[rightChildNodeIdx].Parent = currentNodeIdx;
+                // 处理左孩子
+                // 如果左范围只包含一个元素，则是叶子；否则是内部节点
+                // 在我们的数组映射中：
+                //   叶子索引直接是 [0...N-1]
+                //   内部节点索引是 N + 逻辑索引
+                // Karras算法有个特性：内部节点 k 负责分割以 k 开始的范围。
+                // 所以如果孩子是内部节点，它的逻辑索引就是 leftIdx (即 split)
+                
+                int leftChildNodeIdx;
+                if (Math.Min(i, j) == leftIdx)
+                {
+                    // 左孩子是叶子
+                    leftChildNodeIdx = leftIdx; 
+                }
+                else
+                {
+                    // 左孩子是内部节点
+                    leftChildNodeIdx = numPrimitives + leftIdx; 
                 }
 
-                // 2. 寻找根节点
-                // 根节点是唯一一个 Parent 仍为 -1 的内部节点
-                rootNodeIndex = -1;
-                for (int i = numPrimitives; i < numNodes; i++)
+                // 处理右孩子
+                int rightChildNodeIdx;
+                if (Math.Max(i, j) == rightIdx)
                 {
-                    if (nodes[i].Parent == -1)
-                    {
-                        rootNodeIndex = i;
-                        break;
-                    }
+                    // 右孩子是叶子
+                    rightChildNodeIdx = rightIdx;
+                }
+                else
+                {
+                    // 右孩子是内部节点
+                    rightChildNodeIdx = numPrimitives + rightIdx;
+                }
+
+                // 建立连接
+                nodes[currentNodeIdx].LeftChild = leftChildNodeIdx;
+                nodes[currentNodeIdx].RightChild = rightChildNodeIdx;
+
+                nodes[leftChildNodeIdx].Parent = currentNodeIdx;
+                nodes[rightChildNodeIdx].Parent = currentNodeIdx;
+            }
+
+            // 2. 寻找根节点
+            // 根节点是唯一一个 Parent 仍为 -1 的内部节点
+            rootNodeIndex = -1;
+            for (int i = numPrimitives; i < numNodes; i++)
+            {
+                if (nodes[i].Parent == -1)
+                {
+                    rootNodeIndex = i;
+                    break;
                 }
             }
+        }
         
         
         /// <summary>
@@ -397,6 +405,91 @@ namespace RadianceCascadesWorldBVH
     
             // 内部节点不指向具体对象
             nodes[nodeIdx].ObjectIndex = -1; 
+        }
+        
+        
+        /// <summary>
+        /// 执行 BFS 重排，将树在内存中线性化
+        /// </summary>
+        public void ReorderBVHToBFS()
+        {
+            if (rootNodeIndex == -1 || nodes == null || nodes.Length == 0) return;
+
+            int nodeCount = nodes.Length;
+
+            // 1. 确保缓存数组容量足够 (按 1.2 倍扩容防止频繁分配)
+            if (_tempSortedNodes == null || _tempSortedNodes.Length < nodeCount)
+            {
+                int newSize = Mathf.NextPowerOfTwo(nodeCount); // 或者 * 1.5
+                _tempSortedNodes = new LBVHNodeRaw[newSize];
+                _indexMap = new int[newSize];
+                _bfsQueue = new int[newSize];
+            }
+
+            // 2. 初始化 BFS 状态
+            int queueHead = 0; // 队头
+            int queueTail = 0; // 队尾
+            int newIndexCounter = 0;
+
+            // 将根节点入队
+            _bfsQueue[queueTail++] = rootNodeIndex;
+
+            // 3. 第一轮 BFS：生成映射表 (Old -> New) 并确定新顺序
+            // 这里我们只记录顺序，还没拷贝数据，因为修正指针需要先知道所有孩子的新位置
+            // 但其实我们可以一边拷贝一边修？不行，孩子还没生成。
+            // 最高效的方法：双指针遍历。
+            
+            // 既然是 BFS，新数组的第 i 个元素，就是 BFS 队列弹出的第 i 个元素。
+            // 所以 _bfsQueue 其实就是 sortedNodes 的来源索引数组。
+            
+            while (queueHead < queueTail)
+            {
+                int oldIdx = _bfsQueue[queueHead++]; // Dequeue
+                
+                // 记录映射：旧索引 oldIdx 在新数组中变成了 newIndexCounter
+                _indexMap[oldIdx] = newIndexCounter;
+                newIndexCounter++;
+
+                // 将孩子入队
+                int left = nodes[oldIdx].LeftChild;
+                int right = nodes[oldIdx].RightChild;
+
+                if (left != -1) _bfsQueue[queueTail++] = left;
+                if (right != -1) _bfsQueue[queueTail++] = right;
+            }
+
+            // 4. 第二轮：填充数据并修正指针
+            // 直接遍历刚才生成的队列顺序（它保存了所有节点的旧索引，且顺序就是 BFS 顺序）
+            for (int i = 0; i < nodeCount; i++)
+            {
+                int oldIdx = _bfsQueue[i];
+                
+                // 结构体值拷贝
+                LBVHNodeRaw nodeRaw = nodes[oldIdx];
+
+                // 修正左右孩子索引
+                if (nodeRaw.LeftChild != -1)
+                    nodeRaw.LeftChild = _indexMap[nodeRaw.LeftChild]; // O(1) 查表
+                
+                if (nodeRaw.RightChild != -1)
+                    nodeRaw.RightChild = _indexMap[nodeRaw.RightChild]; // O(1) 查表
+                    
+                // Parent 和 ObjectIndex 不需要变 (Parent 其实变了，但渲染通常不需要 Parent)
+                // 如果你需要 Parent，也可以修：if (nodeRaw.Parent != -1) nodeRaw.Parent = _indexMap[nodeRaw.Parent];
+
+                _tempSortedNodes[i] = nodeRaw;
+            }
+
+            // 5. 交换引用 (这一步几乎无消耗)
+            // 注意：这里我们把缓存数组和主数组交换了，
+            // 下一帧 nodes 就会变成缓存，_tempSortedNodes 变成旧的 nodes 被复用。
+            // 这样避免了 Array.Copy 的开销。
+            var swap = nodes;
+            nodes = _tempSortedNodes; // nodes 现在指向了 BFS 排序好的数据
+            _tempSortedNodes = swap;  // 缓存区拿走旧数组以备下帧使用
+
+            // 6. 更新根节点索引
+            rootNodeIndex = 0; // BFS 保证根节点永远在 0
         }
     }
 }

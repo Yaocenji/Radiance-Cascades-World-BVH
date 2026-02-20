@@ -5,7 +5,10 @@ using System.Runtime.InteropServices;
 using Unity.Mathematics;
 using UnityEngine;
 using Unity.Mathematics;
+
+#if UNITY_EDITOR
 using UnityEditor.Experimental.GraphView;
+#endif
 
 namespace RadianceCascadesWorldBVH
 {
@@ -18,8 +21,8 @@ namespace RadianceCascadesWorldBVH
         public int matIdx;
     }
     
-    // BVH 节点结构
-    public struct LBVHNode
+    // BVH 节点结构 CPU端 未排序的
+    public struct LBVHNodeRaw
     {
         public Vector2 Min;       // AABB 最小值
         public Vector2 Max;       // AABB 最大值
@@ -29,7 +32,15 @@ namespace RadianceCascadesWorldBVH
         public int ObjectIndex;   //如果是叶子，这里存储原始边的索引(index数组的内容)；如果是内部节点，为-1
         public bool IsLeaf => LeftChild == -1; // 判断是否为叶子（约定叶子没有孩子）
     }
-
+    
+    // 定义一个用于上传的结构，与 Shader 严格对应
+    public struct LBVHNodeGpu
+    {
+        public Vector2 PosA;
+        public Vector2 PosB;
+        public int IndexData;
+        public int RightChild;
+    }
         
     // 材质数据结构
     [Serializable]
@@ -157,12 +168,14 @@ namespace RadianceCascadesWorldBVH
             bvhConstructor.BuildBVHStructure();
             // 构建BVH的每个节点的包围盒
             bvhConstructor.RefitBVH();
+            // 重排BFS
+            bvhConstructor.ReorderBVHToBFS();
 
             UpdateBuffers(edges, bvhConstructor.nodes);
         }
         
         
-        public void UpdateBuffers(List<edgeBVH> edges, LBVHNode[] nodes)
+        public void UpdateBuffers(List<edgeBVH> edges, LBVHNodeRaw[] nodes)
         {
             // 1. 管理 Edge Buffer (叶子数据)
             // 如果edges不为零，那么要准备合适的edges
@@ -188,10 +201,10 @@ namespace RadianceCascadesWorldBVH
                 if (nodeBuffer == null || nodeBuffer.count < nodeCount)
                 {
                     nodeBuffer?.Release();
-                    int s = Marshal.SizeOf<LBVHNode>();
+                    int s = Marshal.SizeOf<LBVHNodeRaw>();
                     nodeBuffer = new ComputeBuffer(nodeCount, s); // 对应 NodeGPU 大小
                 }
-                Debug.Log("nodeBuffer set.");
+                //Debug.Log("nodeBuffer set.");
                 nodeBuffer.SetData(nodes, 0, 0, nodeCount);
             }
             
