@@ -71,6 +71,8 @@ float2 posWorld2Pixel(float3 worldPos, float2 screenParam)
     return pixelPos;
 }
 
+//#define STEP_HALF_OPTIMIZATION
+
 [numthreads(8,8,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
@@ -87,6 +89,18 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     uint2 block2DIndex = floor(id.xy / blockDim);
     // 这一层的块的flatten索引
     float blockFlattenIndex = block2DIndex.x + block2DIndex.y * blockSqrtCount;
+
+#ifdef STEP_HALF_OPTIMIZATION
+    // 总索引数，根据每层探针数/4，角度数*2为例
+    uint blockFlattenIndexMax = blockSqrtCount * blockSqrtCount / (1 << _RCWB_CascadeLevel);
+    // 如果超出的，那么就截掉
+    if (blockFlattenIndex >= blockFlattenIndexMax)
+    {
+        Result[id.xy] = float4(0, 0, 0, 1);
+        return;
+    }
+#endif
+    
     // 这一层的块内像素坐标
     float2 pixelPosInBlock = fmod(id.xy, blockDim);
 
@@ -98,13 +112,13 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     float2 center2currDir = normalize(posWS - centerPosWS);
 
     // 测试射线与BVH求交
-    RayWS rayTest;
+    /*RayWS rayTest;
     rayTest.Origin = centerPosWS;
     rayTest.Direction = center2currDir;
     IntersectsRaySegmentResult result1;
     bool intTest1 = IntersectRayBVH(rayTest, result1);
     IntersectsRaySegmentResultArray result2;
-    bool intTest2 = IntersectRayBVHArray(rayTest, length(centerPosWS - posWS), result2);
+    bool intTest2 = IntersectRayBVHArray(rayTest, length(centerPosWS - posWS), result2);*/
 
     
     // 射线跨越距离
@@ -116,13 +130,27 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     float2 probeOriginWS = posPixel2World(probeOriginPS, _RCWB_CascadeResolution);
 
     min16float4 finalResults = 0;
+    
     // 角度分辨率，每个block对应一个角度
-    float angleStep = TWO_PI / (blockSqrtCount * blockSqrtCount * 4);
+    float angleStep = 0;
+    int loopNum = 0;
+#ifdef STEP_HALF_OPTIMIZATION
+    angleStep = TWO_PI / (blockFlattenIndexMax * 2);
+    loopNum = 2;
+#else
+    loopNum = 4;
+    angleStep = TWO_PI / (blockSqrtCount * blockSqrtCount * 4);
+#endif
     
     for (int i = 0; i < 4; ++i)
     {
         // 当前循环对应的角度索引
-        float angleIndex = blockFlattenIndex * 4 + i;
+        float angleIndex = 0;
+#ifdef STEP_HALF_OPTIMIZATION
+        angleIndex = blockFlattenIndex * 2 + i;
+#else
+        angleIndex = blockFlattenIndex * 4 + i;
+#endif
         // 当前线程对应的角度
         float currAngle = angleStep * (angleIndex + .5);
         
@@ -150,7 +178,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
             // 初始化的interval数据
             float2 currStart = ray.Origin;
             float2 currEnd = ray.Origin + ray.Direction * maxLightLength;
-            int currMatIdx = GetMaterialIndex(_BVH_NodeEdge_Buffer[results.results[0].nodeIndex]);
+            int currMatIdx = results.results[0].matIdx;//GetMaterialIndex(_BVH_NodeEdge_Buffer[results.results[0].nodeIndex]);
 
             int intervalCount = 0;
             bool endflag = true;
@@ -174,7 +202,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
                 else
                 {
                     currStart = currResult.hitPoint;
-                    currMatIdx = GetMaterialIndex(_BVH_NodeEdge_Buffer[currResult.nodeIndex]);
+                    currMatIdx = currResult.matIdx;//GetMaterialIndex(_BVH_NodeEdge_Buffer[currResult.nodeIndex]);
                     endflag = false;
                 }
             }
@@ -233,9 +261,10 @@ void CSMain (uint3 id : SV_DispatchThreadID)
             float2 positionLast = pixelPosInBlock * 0.5 + 0.25;
             // 对应的上一层的块本身的像素坐标偏移
             float2 positionLastOffset = float2(fmod(angleIndex , blockSqrtCount * 2), floor(angleIndex / (blockSqrtCount * 2)));
+            positionLastOffset *= blockDim * 0.5;
             // 把这个像素坐标clamp一下防止采样到隔壁的块
             positionLast = clamp(positionLast, 0.5, blockDim * 0.5 - 0.5);
-            float2 samplePos = (positionLast + positionLastOffset * blockDim * 0.5);
+            float2 samplePos = positionLast + positionLastOffset;
             float2 sampleUV = samplePos / _RCWB_CascadeResolution;
             // 采样上一层的块
             float4 rad = SAMPLE_TEXTURE2D_LOD(_RCWB_LastResult, sampler_RCWB_LastResult, sampleUV, 0);
@@ -244,7 +273,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
             radiance.a *= rad.a;
         }
 
-        finalResults += radiance * .25f;
+        finalResults += radiance * (1.0f / loopNum);
     }
 
     Result[id.xy] = finalResults;

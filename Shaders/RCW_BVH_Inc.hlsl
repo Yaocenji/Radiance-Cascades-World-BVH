@@ -69,6 +69,7 @@ struct IntersectsRaySegmentResult
     float2 hitPoint;
     float2 hitNormal;
     int nodeIndex;      // 命中的叶子节点索引
+    int matIdx;
 };
 
 // =========================================================
@@ -115,12 +116,13 @@ bool IntersectsRayAABB(RayWS ray, in LBVHNodeGpu node)
 // 求交：射线与线段求交 (使用紧凑格式叶子节点)
 // 对于叶子节点: PosA = Edge Start, PosB = Edge End
 // =========================================================
-bool IntersectsRaySegment(RayWS ray, in LBVHNodeGpu leafNode, out IntersectsRaySegmentResult result)
+bool IntersectsRaySegment(RayWS ray, in LBVHNodeGpu leafNode, int matIdx, out IntersectsRaySegmentResult result)
 {
     // 1. 初始化
     result.hitPoint = float2(0, 0);
     result.hitNormal = float2(0, 0);
     result.nodeIndex = -1;
+    result.matIdx = matIdx;
 
     // 2. 准备向量
     // 叶子节点: PosA = edge.start, PosB = edge.end
@@ -207,7 +209,9 @@ bool IntersectRayBVH(RayWS ray, out IntersectsRaySegmentResult result)
             // IndexData = ~matIdx (按位取反)
             IntersectsRaySegmentResult tempResult;
 
-            if (IntersectsRaySegment(ray, node, tempResult))
+            int matIdx = ~node.IndexData;
+            
+            if (IntersectsRaySegment(ray, node, matIdx, tempResult))
             {
                 float dist = distance(ray.Origin, tempResult.hitPoint);
 
@@ -304,7 +308,9 @@ bool IntersectRayBVHArray(RayWS ray, float maxDistance, out IntersectsRaySegment
             // === 叶子节点处理 ===
             IntersectsRaySegmentResult tempResult;
 
-            if (IntersectsRaySegment(ray, node, tempResult))
+            int matIdx = ~node.IndexData; 
+
+            if (IntersectsRaySegment(ray, node, matIdx, tempResult))
             {
                 float dist = distance(ray.Origin, tempResult.hitPoint);
 
