@@ -1,6 +1,9 @@
 
 #pragma kernel CSMain
 
+// 或者
+#pragma target 5.0 // 通常 DX12 / Vulkan 环境下会自动支持 SM6.0
+
 // 摄像机矩阵
 float4x4 MatrixInvVP;
 float4x4 MatrixVP;
@@ -175,7 +178,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
             // 步进区间
             RayMarchingInterval intervals[MAX_RAYMARCHING_INTERVALS];
 
-            // 初始化的interval数据
+            /*// 初始化的interval数据
             float2 currStart = ray.Origin;
             float2 currEnd = ray.Origin + ray.Direction * maxLightLength;
             int currMatIdx = results.results[0].matIdx;//GetMaterialIndex(_BVH_NodeEdge_Buffer[results.results[0].nodeIndex]);
@@ -215,7 +218,9 @@ void CSMain (uint3 id : SV_DispatchThreadID)
                 intervals[intervalCount].matIdx = currMatIdx;
                 endflag = true;
                 intervalCount++;
-            }
+            }*/
+            int intervalCount = 0;
+            GetIntervals(ray, results, maxLightLength, intervals, intervalCount);
 
             // 遍历所有的积分区间
             min16float4 defaultAnsRadiance = float4(0, 0, 0, 1);
@@ -235,6 +240,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
                 if (defaultAnsRadiance.w < 0.001) break; 
             }
             radiance = defaultAnsRadiance;
+            
             /*if (intRayBVHInterior)
             {
                 float segmentTransmittance = exp(-length(resultInterior.hitPoint - result.hitPoint));

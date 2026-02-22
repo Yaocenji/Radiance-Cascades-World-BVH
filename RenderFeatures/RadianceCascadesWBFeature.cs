@@ -134,7 +134,7 @@ namespace RadianceCascadesWorldBVH
                     cmd.SetComputeTextureParam(rcShader, kernelHandle, "_RCWB_LastResult", (i & 1) == 1 ?  m_Rcwb_Handle_0 : m_Rcwb_Handle_1);
                     // RC的目标纹理
                     cmd.SetComputeTextureParam(rcShader, kernelHandle, "Result", (i & 1) == 1 ?  m_Rcwb_Handle_1 : m_Rcwb_Handle_0);
-                    cmd.DispatchCompute(rcShader, kernelHandle, rcWidth / 8 + 1, rcHeight / 8 + 1, 1);
+                    cmd.DispatchCompute(rcShader, kernelHandle, (rcWidth + 7) / 8, (rcHeight + 7) / 8, 1);
                 }
                 
                 cmd.EndSample("Radiance Cascades WB");

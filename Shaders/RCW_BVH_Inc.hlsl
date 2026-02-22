@@ -85,15 +85,8 @@ int GetMaterialIndex(in LBVHNodeGpu leafNode)
 // 求交：射线和AABB包围盒求交 (使用紧凑格式节点)
 // 对于内部节点: PosA = AABB Min, PosB = AABB Max
 // =========================================================
-bool IntersectsRayAABB(RayWS ray, in LBVHNodeGpu node)
+bool IntersectsRayAABB(RayWS ray, float2 invDir, in LBVHNodeGpu node)
 {
-    // 1. 处理射线方向，防止除以 0
-    float2 dir = ray.Direction;
-    if (abs(dir.x) < 1e-9) dir.x = 1e-9 * (dir.x >= 0 ? 1.0 : -1.0);
-    if (abs(dir.y) < 1e-9) dir.y = 1e-9 * (dir.y >= 0 ? 1.0 : -1.0);
-    
-    float2 invDir = 1.0f / dir;
-
     // 2. 计算射线与 AABB 各个平面的相交时间 t
     // 内部节点: PosA = Min, PosB = Max
     float2 t0 = (node.PosA - ray.Origin) * invDir;
@@ -187,6 +180,12 @@ bool IntersectRayBVH(RayWS ray, out IntersectsRaySegmentResult result)
     int stackTop = 0;
     nodeStack[0] = _BVH_Root_Index;
 
+    // 预计算invDir
+    float2 dir = ray.Direction;
+    if (abs(dir.x) < 1e-9) dir.x = 1e-9 * (dir.x >= 0 ? 1.0 : -1.0);
+    if (abs(dir.y) < 1e-9) dir.y = 1e-9 * (dir.y >= 0 ? 1.0 : -1.0);
+    float2 invDir = 1.0f / dir;
+
     // 4. 开始遍历 Loop
     [loop]
     while (stackTop >= 0)
@@ -231,7 +230,7 @@ bool IntersectRayBVH(RayWS ray, out IntersectsRaySegmentResult result)
             // IndexData = LeftChild, RightChild = RightChild
 
             // AABB 剔除测试
-            if (!IntersectsRayAABB(ray, node))
+            if (!IntersectsRayAABB(ray, invDir, node))
             {
                 continue;
             }
@@ -240,10 +239,9 @@ bool IntersectRayBVH(RayWS ray, out IntersectsRaySegmentResult result)
             if (stackTop < MAX_RECUR_DEEP - 2) 
             {
                 stackTop++;
-                nodeStack[stackTop] = node.IndexData;   // LeftChild
-                
-                stackTop++;
                 nodeStack[stackTop] = node.RightChild;
+                stackTop++;
+                nodeStack[stackTop] = node.IndexData;   // LeftChild
             }
         }
     }
@@ -287,6 +285,12 @@ bool IntersectRayBVHArray(RayWS ray, float maxDistance, out IntersectsRaySegment
     int nodeStack[MAX_RECUR_DEEP];
     int stackTop = 0;
     nodeStack[0] = _BVH_Root_Index;
+
+    // 预计算invDir
+    float2 dir = ray.Direction;
+    if (abs(dir.x) < 1e-9) dir.x = 1e-9 * (dir.x >= 0 ? 1.0 : -1.0);
+    if (abs(dir.y) < 1e-9) dir.y = 1e-9 * (dir.y >= 0 ? 1.0 : -1.0);
+    float2 invDir = 1.0f / dir;
 
     // 开始遍历
     [loop]
@@ -368,7 +372,7 @@ bool IntersectRayBVHArray(RayWS ray, float maxDistance, out IntersectsRaySegment
         {
             // === 内部节点处理 ===
             // AABB 剔除测试
-            if (!IntersectsRayAABB(ray, node))
+            if (!IntersectsRayAABB(ray, invDir, node))
             {
                 continue;
             }
@@ -377,9 +381,9 @@ bool IntersectRayBVHArray(RayWS ray, float maxDistance, out IntersectsRaySegment
             if (stackTop < MAX_RECUR_DEEP - 2)
             {
                 stackTop++;
-                nodeStack[stackTop] = node.IndexData;   // LeftChild
-                stackTop++;
                 nodeStack[stackTop] = node.RightChild;
+                stackTop++;
+                nodeStack[stackTop] = node.IndexData;   // LeftChild
             }
         }
     }
@@ -400,3 +404,49 @@ struct RayMarchingInterval
     float2 start;
     float2 end;
 };
+
+
+void GetIntervals(RayWS ray, IntersectsRaySegmentResultArray results, float maxLightLength, out RayMarchingInterval intervals[MAX_RAYMARCHING_INTERVALS], out int intervalCount)
+{
+    // 初始化的interval数据
+    float2 currStart = ray.Origin;
+    float2 currEnd = ray.Origin + ray.Direction * maxLightLength;
+    int currMatIdx = results.results[0].matIdx;//GetMaterialIndex(_BVH_NodeEdge_Buffer[results.results[0].nodeIndex]);
+
+    intervalCount = 0;
+    bool endflag = true;
+    for (int j = 0; j < results.intersectsCount; ++j)
+    {
+        IntersectsRaySegmentResult currResult = results.results[j];
+                
+        // 当前点是出点，
+        if (dot(currResult.hitNormal, ray.Direction) > 0.0)
+        {
+            currEnd = currResult.hitPoint;
+                    
+            // 和入点一起组成一个区间
+            intervals[intervalCount].start = currStart;
+            intervals[intervalCount].end = currEnd;
+            intervals[intervalCount].matIdx = currMatIdx;
+            endflag = true;
+            intervalCount++;
+        }
+        // 否则是入点
+        else
+        {
+            currStart = currResult.hitPoint;
+            currMatIdx = currResult.matIdx;//GetMaterialIndex(_BVH_NodeEdge_Buffer[currResult.nodeIndex]);
+            endflag = false;
+        }
+    }
+    // 特判：如果循环结束了endflag却是false，那么说明区间开放了
+    if (endflag == false)
+    {
+        currEnd = ray.Origin + ray.Direction * maxLightLength;
+        intervals[intervalCount].start = currStart;
+        intervals[intervalCount].end = currEnd;
+        intervals[intervalCount].matIdx = currMatIdx;
+        endflag = true;
+        intervalCount++;
+    }
+}
