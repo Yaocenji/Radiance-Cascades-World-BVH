@@ -32,6 +32,7 @@ namespace RadianceCascadesWorldBVH
         private NativeArray<uint> _nativeMortonCodes;
         private NativeArray<int> _nativeIndices;
         private NativeArray<LBVHNodeRaw> _nativeNodes;
+        private NativeArray<int> _nativeParents; // Parent 独立存储，避免 BuildBVHTopologyJob 中的并发写入竞争
         private NativeArray<LBVHNodeGpu> _nativeGpuNodes;
         
         // BFS 重排用的临时数组
@@ -85,6 +86,7 @@ namespace RadianceCascadesWorldBVH
             
             // 释放旧的
             if (_nativeNodes.IsCreated) _nativeNodes.Dispose();
+            if (_nativeParents.IsCreated) _nativeParents.Dispose();
             if (_nativeGpuNodes.IsCreated) _nativeGpuNodes.Dispose();
             if (_tempSortedNodes.IsCreated) _tempSortedNodes.Dispose();
             if (_indexMap.IsCreated) _indexMap.Dispose();
@@ -92,6 +94,7 @@ namespace RadianceCascadesWorldBVH
             
             // 分配新的
             _nativeNodes = new NativeArray<LBVHNodeRaw>(newCapacity, Allocator.Persistent);
+            _nativeParents = new NativeArray<int>(newCapacity, Allocator.Persistent);
             _nativeGpuNodes = new NativeArray<LBVHNodeGpu>(newCapacity, Allocator.Persistent);
             _tempSortedNodes = new NativeArray<LBVHNodeRaw>(newCapacity, Allocator.Persistent);
             _indexMap = new NativeArray<int>(newCapacity, Allocator.Persistent);
@@ -217,6 +220,7 @@ namespace RadianceCascadesWorldBVH
             var initJob = new InitNodesJob
             {
                 Nodes = _nativeNodes,
+                Parents = _nativeParents,
                 NodeCount = numNodes
             };
             initJob.Schedule(numNodes, 64).Complete();
@@ -228,18 +232,18 @@ namespace RadianceCascadesWorldBVH
                 {
                     MortonCodes = _nativeMortonCodes,
                     Nodes = _nativeNodes,
+                    Parents = _nativeParents,
                     NumPrimitives = numPrimitives
                 };
                 buildJob.Schedule(numPrimitives - 1, 64).Complete();
             }
             
             // 寻找根节点（串行，因为只需要找一个）
-            rootNodeIndex = numPrimitives; // Karras 算法中，根节点通常是 numPrimitives
+            rootNodeIndex = numPrimitives;
             
-            // 验证根节点
             for (int i = numPrimitives; i < numNodes; i++)
             {
-                if (_nativeNodes[i].Parent == -1)
+                if (_nativeParents[i] == -1)
                 {
                     rootNodeIndex = i;
                     break;
@@ -268,16 +272,15 @@ namespace RadianceCascadesWorldBVH
             leafJob.Schedule(numPrimitives, 64).Complete();
             
             // 第二步：自底向上计算内部节点的 AABB
-            // 使用原子计数器实现无锁自底向上遍历
             var atomicCounters = new NativeArray<int>(numNodes, Allocator.TempJob);
             
             var internalJob = new ComputeInternalAABBJob
             {
                 Nodes = _nativeNodes,
+                Parents = _nativeParents,
                 AtomicCounters = atomicCounters,
                 NumPrimitives = numPrimitives
             };
-            // 从所有叶子节点开始向上传播
             internalJob.Schedule(numPrimitives, 64).Complete();
             
             atomicCounters.Dispose();
@@ -375,6 +378,7 @@ namespace RadianceCascadesWorldBVH
             if (_nativeMortonCodes.IsCreated) _nativeMortonCodes.Dispose();
             if (_nativeIndices.IsCreated) _nativeIndices.Dispose();
             if (_nativeNodes.IsCreated) _nativeNodes.Dispose();
+            if (_nativeParents.IsCreated) _nativeParents.Dispose();
             if (_nativeGpuNodes.IsCreated) _nativeGpuNodes.Dispose();
             if (_tempSortedNodes.IsCreated) _tempSortedNodes.Dispose();
             if (_indexMap.IsCreated) _indexMap.Dispose();
@@ -478,6 +482,7 @@ namespace RadianceCascadesWorldBVH
     struct InitNodesJob : IJobParallelFor
     {
         public NativeArray<LBVHNodeRaw> Nodes;
+        [WriteOnly] public NativeArray<int> Parents;
         public int NodeCount;
         
         public void Execute(int i)
@@ -490,6 +495,7 @@ namespace RadianceCascadesWorldBVH
             node.RightChild = -1;
             node.ObjectIndex = -1;
             Nodes[i] = node;
+            Parents[i] = -1;
         }
     }
     
@@ -499,6 +505,8 @@ namespace RadianceCascadesWorldBVH
         [ReadOnly] public NativeArray<uint> MortonCodes;
         [NativeDisableParallelForRestriction]
         public NativeArray<LBVHNodeRaw> Nodes;
+        [NativeDisableParallelForRestriction]
+        [WriteOnly] public NativeArray<int> Parents;
         public int NumPrimitives;
         
         public void Execute(int i)
@@ -538,20 +546,15 @@ namespace RadianceCascadesWorldBVH
             int leftChildIdx = (math.min(i, j) == split) ? split : (NumPrimitives + split);
             int rightChildIdx = (math.max(i, j) == split + 1) ? (split + 1) : (NumPrimitives + split + 1);
             
-            // 写入当前节点
+            // 写入当前节点的 LeftChild/RightChild（每个内部节点只被一个线程写入，无竞争）
             var node = Nodes[currentNodeIdx];
             node.LeftChild = leftChildIdx;
             node.RightChild = rightChildIdx;
             Nodes[currentNodeIdx] = node;
             
-            // 写入子节点的 Parent
-            var leftNode = Nodes[leftChildIdx];
-            leftNode.Parent = currentNodeIdx;
-            Nodes[leftChildIdx] = leftNode;
-            
-            var rightNode = Nodes[rightChildIdx];
-            rightNode.Parent = currentNodeIdx;
-            Nodes[rightChildIdx] = rightNode;
+            // Parent 写入独立数组（int 的写入是原子的，不会与 Nodes 的结构体读写冲突）
+            Parents[leftChildIdx] = currentNodeIdx;
+            Parents[rightChildIdx] = currentNodeIdx;
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -599,6 +602,9 @@ namespace RadianceCascadesWorldBVH
     {
         [NativeDisableParallelForRestriction]
         public NativeArray<LBVHNodeRaw> Nodes;
+        [ReadOnly]
+        [NativeDisableParallelForRestriction]
+        public NativeArray<int> Parents;
         [NativeDisableParallelForRestriction]
         [NativeDisableContainerSafetyRestriction]
         public NativeArray<int> AtomicCounters;
@@ -608,21 +614,16 @@ namespace RadianceCascadesWorldBVH
         {
             if (leafIdx >= NumPrimitives) return;
             
-            int currentIdx = Nodes[leafIdx].Parent;
+            int currentIdx = Parents[leafIdx];
             
             while (currentIdx != -1)
             {
-                // 原子递增计数器，只有第二个到达的线程才处理
                 int* counterPtr = (int*)AtomicCounters.GetUnsafePtr() + currentIdx;
                 int count = System.Threading.Interlocked.Increment(ref *counterPtr);
                 
                 if (count < 2)
-                {
-                    // 第一个到达，等待另一个子节点
                     return;
-                }
                 
-                // 第二个到达，计算 AABB
                 var node = Nodes[currentIdx];
                 int left = node.LeftChild;
                 int right = node.RightChild;
@@ -637,7 +638,7 @@ namespace RadianceCascadesWorldBVH
                 node.ObjectIndex = -1;
                 Nodes[currentIdx] = node;
                 
-                currentIdx = node.Parent;
+                currentIdx = Parents[currentIdx];
             }
         }
     }
