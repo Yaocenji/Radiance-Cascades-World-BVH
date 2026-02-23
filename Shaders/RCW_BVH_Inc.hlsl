@@ -42,7 +42,8 @@ struct MaterialData
 {
     float4 BasicColor;
     float4 Emission;
-    float4 uvBox;
+    float4 uvMatrix;
+    float2 uvTranslation;
     
     float Density;
     int TextureIndex;
@@ -450,3 +451,19 @@ void GetIntervals(RayWS ray, IntersectsRaySegmentResultArray results, float maxL
         intervalCount++;
     }
 }
+
+
+
+/// <summary>
+/// 使用计算好的变换，将世界空间点转换为Atlas UV坐标（用于调试验证）
+/// </summary>
+float2 WorldToAtlasUV(in float2 worldPoint, in float4 uvMatrix, in float2 uvTranslation)
+{
+    return float2(
+        uvMatrix.x * worldPoint.x + uvMatrix.y * worldPoint.y + uvTranslation.x,
+        uvMatrix.z * worldPoint.x + uvMatrix.w * worldPoint.y + uvTranslation.y
+    );
+}
+
+
+

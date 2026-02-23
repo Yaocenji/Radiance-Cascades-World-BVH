@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using UnityEngine;
 
 namespace RadianceCascadesWorldBVH
@@ -18,6 +18,128 @@ namespace RadianceCascadesWorldBVH
         
         private int TextureIndex;   // 如果你有多张图集，这里标记用哪张，单张图集可忽略
         
-        private Vector4 uvBox;
+        private Vector4 uvMatrix;       // 2x2线性变换矩阵，存储为(m00, m01, m10, m11)
+        private Vector2 uvTranslation;  // 平移向量
+        
+        private SpriteRenderer spriteRenderer;
+        
+        public Vector4 UVMatrix => uvMatrix;
+        public Vector2 UVTranslation => uvTranslation;
+        
+        private void Awake()
+        {
+            spriteRenderer = GetComponent<SpriteRenderer>();
+        }
+
+        private void Update()
+        {
+            ComputeWorldToAtlasUVTransform();
+        }
+        
+        /// <summary>
+        /// 计算从2D世界空间到Atlas UV空间的仿射变换
+        /// UV_atlas = uvMatrix * worldPos + uvTranslation
+        /// 其中uvMatrix是2x2矩阵，按行优先存储为Vector4(m00, m01, m10, m11)
+        /// </summary>
+        public void ComputeWorldToAtlasUVTransform()
+        {
+            if (spriteRenderer == null)
+                spriteRenderer = GetComponent<SpriteRenderer>();
+            
+            Sprite sprite = spriteRenderer?.sprite;
+            // 必须检查 texture 是否存在，以及 textureRect 是否有效
+            if (sprite == null || sprite.texture == null)
+            {
+                uvMatrix = new Vector4(1, 0, 0, 1);
+                uvTranslation = Vector2.zero;
+                return;
+            }
+            
+            // --- Step 1: 世界空间 -> 本地空间 (保持不变) ---
+            Vector3 worldPos = transform.position;
+            Vector3 worldScale = transform.lossyScale;
+            float rotationZ = transform.eulerAngles.z * Mathf.Deg2Rad;
+            
+            float flipX = spriteRenderer.flipX ? -1f : 1f;
+            float flipY = spriteRenderer.flipY ? -1f : 1f;
+            
+            float cosTheta = Mathf.Cos(-rotationZ);
+            float sinTheta = Mathf.Sin(-rotationZ);
+            
+            // 防止除零
+            float invScaleX = Mathf.Abs(worldScale.x) > 1e-6f ? 1f / (worldScale.x * flipX) : 0f;
+            float invScaleY = Mathf.Abs(worldScale.y) > 1e-6f ? 1f / (worldScale.y * flipY) : 0f;
+            
+            float m00_wl = invScaleX * cosTheta;
+            float m01_wl = -invScaleX * sinTheta;
+            float m10_wl = invScaleY * sinTheta;
+            float m11_wl = invScaleY * cosTheta;
+            
+            float tx_wl = -(m00_wl * worldPos.x + m01_wl * worldPos.y);
+            float ty_wl = -(m10_wl * worldPos.x + m11_wl * worldPos.y);
+
+            // --- Step 2: 本地空间 -> Atlas UV (核心修正) ---
+            // 不再依赖 Bounds，而是直接使用 PPU 和 Offset 计算
+            
+            // Atlas 的总宽高
+            float atlasWidth = sprite.texture.width;
+            float atlasHeight = sprite.texture.height;
+            
+            // Sprite 的 PPU (决定了缩放比例)
+            float ppu = sprite.pixelsPerUnit;
+            
+            // Sprite 在 Atlas 中的矩形区域
+            Rect texRect = sprite.textureRect;
+            
+            // 关键：裁剪偏移量。如果 Unity 裁剪了左边的透明像素，这个值会记录裁剪了多少。
+            // 它的含义是：Atlas 中图像的左下角，相对于原始未裁剪图像左下角的偏移。
+            Vector2 texRectOffset = sprite.textureRectOffset;
+            
+            // 原始 Pivot (相对于未裁剪图像左下角的像素位置)
+            Vector2 pivot = sprite.pivot;
+
+            // 推导：
+            // 1. LocalPos * PPU = 距离 Pivot 的像素距离
+            // 2. + Pivot = 在原始未裁剪图片中的像素坐标 (以左下角为原点)
+            // 3. - texRectOffset = 在 Atlas 切片中的局部像素坐标 (处理裁剪)
+            // 4. + texRect.position = 在 Atlas 大图中的绝对像素坐标
+            // 5. / atlasSize = UV
+            
+            // 缩放因子：PPU / AtlasSize
+            float scaleX_la = ppu / atlasWidth;
+            float scaleY_la = ppu / atlasHeight;
+            
+            // 平移因子：(Pivot - Offset + AtlasRectPos) / AtlasSize
+            // 注意：因为我们是把 Local(0,0) 映射过去，而 Local(0,0) 就是 Pivot 点
+            float transX_la = (pivot.x - texRectOffset.x + texRect.x) / atlasWidth;
+            float transY_la = (pivot.y - texRectOffset.y + texRect.y) / atlasHeight;
+
+            // --- Step 3: 组合矩阵 ---
+            // UV = M_la * (M_wl * P + T_wl) + T_la
+            //    = (M_la * M_wl) * P + (M_la * T_wl + T_la)
+            
+            uvMatrix = new Vector4(
+                scaleX_la * m00_wl,
+                scaleX_la * m01_wl,
+                scaleY_la * m10_wl,
+                scaleY_la * m11_wl
+            );
+            
+            uvTranslation = new Vector2(
+                scaleX_la * tx_wl + transX_la,
+                scaleY_la * ty_wl + transY_la
+            );
+        }
+        
+        /// <summary>
+        /// 使用计算好的变换，将世界空间点转换为Atlas UV坐标（用于调试验证）
+        /// </summary>
+        public Vector2 WorldToAtlasUV(Vector2 worldPoint)
+        {
+            return new Vector2(
+                uvMatrix.x * worldPoint.x + uvMatrix.y * worldPoint.y + uvTranslation.x,
+                uvMatrix.z * worldPoint.x + uvMatrix.w * worldPoint.y + uvTranslation.y
+            );
+        }
     }
 }

@@ -23,6 +23,8 @@ float _RCWB_RayRange_WS;
 TEXTURE2D(_RCWB_LastResult);
 SAMPLER(sampler_RCWB_LastResult);
 RWTexture2D <float4> Result;
+TEXTURE2D(_RCWB_Atlas);
+SAMPLER(sampler_RCWB_Atlas);
 
 // 计算射线的起终点（世界空间）
 float2 CalculateRayRange(uint index, uint count)
@@ -300,4 +302,9 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     //Result[id.xy] = float4(result.hitNormal * .5 + .5, 0, 1);
     //Result[id.xy] = intTest1 ? (dot(result1.hitNormal, center2currDir) > 0.0 ? float4(0, 0, 1, 1) : float4(1, 0, 0, 1)) : 0;
     //Result[id.xy] = intTest2 ? float4(result2.intersectsCount / 6.0f, 0, 0, 1) : 0;
+
+    // float2 atlasUV = WorldToAtlasUV(posWS, _BVH_Material_Buffer[0].uvMatrix, _BVH_Material_Buffer[0].uvTranslation);
+    // float4 sampleAtlas = SAMPLE_TEXTURE2D_LOD(_RCWB_Atlas, sampler_RCWB_Atlas, atlasUV, 0);
+    // Result[id.xy] = sampleAtlas;
+    // Result[id.xy] = float4(atlasUV, 0, 1);
 }

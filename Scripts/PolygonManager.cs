@@ -66,7 +66,8 @@ namespace RadianceCascadesWorldBVH
         public Color BasicColor;       // 基础色
         [ColorUsage(false, true)] 
         public Color Emission;     // 发光
-        public Vector4 uvBox;
+        public Vector4 uvMatrix;
+        public Vector2 uvTranslation;
         public float Density;       // 物质密度
         public int TextureIndex;   // 如果你有多张图集，这里标记用哪张，单张图集可忽略
         private float _padding0;
@@ -166,7 +167,8 @@ namespace RadianceCascadesWorldBVH
                 mat.Density = obj.Density;
                 mat.Emission = obj.Emission;
                 mat.TextureIndex = 0; // TODO: 后续接入图集索引
-                mat.uvBox = Vector4.zero; // TODO: 后续接入UV信息
+                mat.uvMatrix = obj.UVMatrix;
+                mat.uvTranslation = obj.UVTranslation;
                 materialData.Add(mat);
             }
         }
@@ -174,6 +176,11 @@ namespace RadianceCascadesWorldBVH
         // Update is called once per frame
         void Update()
         {
+            if (spriteRenderers.Count > 0)
+            {
+                BindAtlasGlobal(spriteRenderers[0].sprite);
+            }
+            
             // 重新生成材质数据
             GenerateMaterialData();
             
@@ -202,6 +209,25 @@ namespace RadianceCascadesWorldBVH
 
             //UpdateBuffers(edges, bvhConstructor.nodes);
             UpdateBuffers(edges, bvhConstructorAccelerated.nodes);
+        }
+        
+        
+        // 方法 A: 如果你手头有 Sprite 列表 (推荐用于你的 PolygonManager)
+        public void BindAtlasGlobal(Sprite anySpriteInAtlas)
+        {
+            // 1. 获取颜色图集 (Albedo Atlas)
+            // 运行时，这会自动指向打包后的大图
+            Texture2D mainAtlas = anySpriteInAtlas.texture;
+
+            // 2. 获取法线图集 (Normal Atlas)
+            // 即使你没在 Inspector 里引用，Unity 也会生成平行图集
+            //Texture2D normalAtlas = anySpriteInAtlas.GetSecondaryTexture("_NormalMap");
+
+            // 3. 绑定到全局 Shader 变量
+            // 这样你的 Compute Shader 和 片元着色器都能直接访问
+            Shader.SetGlobalTexture("_RCWB_Atlas", mainAtlas);
+
+            //Debug.Log($"Atlas Bound: {mainAtlas.name} ({mainAtlas.width}x{mainAtlas.height})");
         }
         
         

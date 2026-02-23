@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
+using UnityEngine.U2D;
 
 namespace RadianceCascadesWorldBVH
 {
@@ -123,7 +124,7 @@ namespace RadianceCascadesWorldBVH
                 // RC最大层级
                 cmd.SetComputeIntParam(rcShader, "_RCWB_CascadeCount", settings.cascadeCount);
                 
-                // 
+                // 射线范围
                 cmd.SetComputeFloatParam(rcShader, "_RCWB_RayRange_WS", settings.rayRange);
 
                 for (int i = 0; i < settings.cascadeCount; i++)
@@ -143,7 +144,7 @@ namespace RadianceCascadesWorldBVH
                 RTHandle cameraColorTargetHandle = renderingData.cameraData.renderer.cameraColorTargetHandle;
                 // 奇数次是handle0，偶数次是handle1
                 var ansHandle = ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_0 : m_Rcwb_Handle_1;
-                Blitter.BlitCameraTexture(cmd, ansHandle, cameraColorTargetHandle);
+                Blitter.BlitCameraTexture(cmd, ansHandle, cameraColorTargetHandle, 0f, true);
                 
                 cmd.EndSample("After RCWB");
                 
