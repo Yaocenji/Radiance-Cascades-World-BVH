@@ -1,13 +1,17 @@
 
-#pragma kernel CSMain
+#pragma kernel RadianceCascadeMain
+#pragma kernel ManualStencilFullResolutionMain
+#pragma kernel DirectionMain
 
-// 或者
-#pragma target 5.0 // 通常 DX12 / Vulkan 环境下会自动支持 SM6.0
+#pragma kernel KawaseDownsample
+#pragma kernel KawaseUpsample
 
-// 摄像机矩阵
-float4x4 MatrixInvVP;
-float4x4 MatrixVP;
+#pragma kernel PostprocessMain
 
+// 满分辨率
+uint2 _CameraResolution_Full;
+// 缩放后分辨率
+uint2 _CameraResolution_Resized;
 // RC的分辨率
 uint2 _RCWB_CascadeResolution;
 // RC已经进行到了第几个阶段？
@@ -20,12 +24,6 @@ float _RCWB_RayRange_WS;
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 #include "RCW_BVH_Inc.hlsl"
 
-TEXTURE2D(_RCWB_LastResult);
-SAMPLER(sampler_RCWB_LastResult);
-RWTexture2D <float4> Result;
-TEXTURE2D(_RCWB_Atlas);
-SAMPLER(sampler_RCWB_Atlas);
-
 // 计算射线的起终点（世界空间）
 float2 CalculateRayRange(uint index, uint count)
 {
@@ -37,49 +35,17 @@ float2 CalculateRayRange(uint index, uint count)
     return r * _RCWB_RayRange_WS;
 }
 
-// 像素坐标和世界空间的转换
-float2 posPixel2World(float2 pixelPos, float2 screenParam)
-{
-    float2 uv = pixelPos / screenParam;
-    float2 ndc = uv * 2.0 - 1.0;
-    #if UNITY_UV_STARTS_AT_TOP
-    ndc.y = -ndc.y;
-    #endif
-    float deviceDepth = 0.0;
-    float4 clipPos = float4(ndc, deviceDepth, 1.0);
-    float4 posWSRaw = mul(MatrixInvVP, clipPos);
-    float2 posWS = posWSRaw.xy / posWSRaw.w;
-    return posWS;
-}
-float2 posWorld2Pixel(float3 worldPos, float2 screenParam)
-{
-    // 1. 世界空间 -> 裁剪空间 (Clip Space)
-    float4 clipPos = mul(MatrixVP, float4(worldPos, 1.0));
-    // 也可以使用 URP 内置函数: float4 clipPos = TransformWorldToHClip(worldPos);
-
-    // 2. 裁剪空间 -> NDC (-1 ~ 1)
-    float2 ndc = clipPos.xy / clipPos.w;
-
-    // 3. 处理平台差异 (Y轴翻转)
-    // 逻辑与 forward 函数完全一致：
-    // 如果之前为了匹配 NDC 翻转了 Y，现在为了变回屏幕 UV，需要再次翻转回来
-    #if UNITY_UV_STARTS_AT_TOP
-    ndc.y = -ndc.y;
-    #endif
-
-    // 4. NDC -> UV (0 ~ 1)
-    float2 uv = ndc * 0.5 + 0.5;
-
-    // 5. UV -> 屏幕像素坐标
-    float2 pixelPos = uv * screenParam;
-
-    return pixelPos;
-}
-
 //#define STEP_HALF_OPTIMIZATION
 
+RWTexture2D <float4> Result;
+
+TEXTURE2D(_RCWB_LastResult);
+SAMPLER(sampler_RCWB_LastResult);
+TEXTURE2D(_RCWB_Atlas);
+SAMPLER(sampler_RCWB_Atlas);
+
 [numthreads(8,8,1)]
-void CSMain (uint3 id : SV_DispatchThreadID)
+void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
 {
     
     // 先剔除越界线程（实际RC算法调度的线程数应该恰好整除16，不会有越界线程）
@@ -180,47 +146,6 @@ void CSMain (uint3 id : SV_DispatchThreadID)
             // 步进区间
             RayMarchingInterval intervals[MAX_RAYMARCHING_INTERVALS];
 
-            /*// 初始化的interval数据
-            float2 currStart = ray.Origin;
-            float2 currEnd = ray.Origin + ray.Direction * maxLightLength;
-            int currMatIdx = results.results[0].matIdx;//GetMaterialIndex(_BVH_NodeEdge_Buffer[results.results[0].nodeIndex]);
-
-            int intervalCount = 0;
-            bool endflag = true;
-            for (int j = 0; j < results.intersectsCount; ++j)
-            {
-                IntersectsRaySegmentResult currResult = results.results[j];
-                
-                // 当前点是出点，
-                if (dot(currResult.hitNormal, ray.Direction) > 0.0)
-                {
-                    currEnd = currResult.hitPoint;
-                    
-                    // 和入点一起组成一个区间
-                    intervals[intervalCount].start = currStart;
-                    intervals[intervalCount].end = currEnd;
-                    intervals[intervalCount].matIdx = currMatIdx;
-                    endflag = true;
-                    intervalCount++;
-                }
-                // 否则是入点
-                else
-                {
-                    currStart = currResult.hitPoint;
-                    currMatIdx = currResult.matIdx;//GetMaterialIndex(_BVH_NodeEdge_Buffer[currResult.nodeIndex]);
-                    endflag = false;
-                }
-            }
-            // 特判：如果循环结束了endflag却是false，那么说明区间开放了
-            if (endflag == false)
-            {
-                currEnd = ray.Origin + ray.Direction * maxLightLength;
-                intervals[intervalCount].start = currStart;
-                intervals[intervalCount].end = currEnd;
-                intervals[intervalCount].matIdx = currMatIdx;
-                endflag = true;
-                intervalCount++;
-            }*/
             int intervalCount = 0;
             GetIntervals(ray, results, maxLightLength, intervals, intervalCount);
 
@@ -284,6 +209,13 @@ void CSMain (uint3 id : SV_DispatchThreadID)
         finalResults += radiance * (1.0f / loopNum);
     }
 
+    // 额外的：如果是最后一次，那么需要根据是否在sprite内部
+    bool isInsideSprite = IsInsideSprite(posWS);
+    if (_RCWB_CascadeLevel == 0 && isInsideSprite)
+    {
+        finalResults = float4(0, 0, 0, 1);
+    }
+
     Result[id.xy] = finalResults;
 
     // debug
@@ -307,4 +239,201 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     // float4 sampleAtlas = SAMPLE_TEXTURE2D_LOD(_RCWB_Atlas, sampler_RCWB_Atlas, atlasUV, 0);
     // Result[id.xy] = sampleAtlas;
     // Result[id.xy] = float4(atlasUV, 0, 1);
+
+    //Result[id.xy] = float4(IsInsideSprite(posWS) ? 1.0f : 0.0f, 0, 0, 1);
+}
+
+TEXTURE2D(_RCWB_Result);
+SAMPLER(sampler_RCWB_Result);
+RWTexture2D <half> StencilFullResolution;
+[numthreads(8,8,1)]
+void ManualStencilFullResolutionMain (uint3 id : SV_DispatchThreadID){
+    if (id.x >= _CameraResolution_Full.x || id.y >= _CameraResolution_Full.y)
+        return;
+    float2 posWS = posPixel2World((float2)id.xy, (float2)_CameraResolution_Full);
+    bool isInsideSprite = IsInsideSprite(posWS);
+    if (isInsideSprite)
+    {
+        StencilFullResolution[id.xy] = 0.0h;
+    }
+    else
+    {
+        StencilFullResolution[id.xy] = 1.0h;
+    }
+    //StencilFullResolution[id.xy] = float4(float2(id.xy) / _CameraResolution_Full, 0, 1);
+}
+
+
+RWTexture2D <float2> Direction;
+
+// 四个方向的RCWB结果
+// 是RC的倒数第二层，合并后的结果
+TEXTURE2D(_RCWB_FourDirResult);
+SAMPLER(sampler_RCWB_FourDirResult);
+
+// 一个方向的RCWB结果
+// 是RC的倒数第一层，合并后的结果
+TEXTURE2D(_RCWB_OneDirResult);
+SAMPLER(sampler_RCWB_OneDirResult);
+
+[numthreads(8,8,1)]
+void DirectionMain (uint3 id : SV_DispatchThreadID){
+#ifndef STEP_HALF_OPTIMIZATION
+
+    // 先剔除越界线程（实际RC算法调度的线程数应该恰好整除16，不会有越界线程）
+    if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
+        return;
+    // 计算世界空间坐标
+    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
+
+    const half2 fourDirs[4] = {
+    half2( 0.70710678, 0.70710678),
+    half2(-0.70710678, 0.70710678),
+    half2(-0.70710678,-0.70710678),
+    half2( 0.70710678,-0.70710678)
+    };
+
+    // 在loop内部
+    if (IsInsideSprite(posWS))
+    {
+        // do nothing
+        Direction[id.xy] = 0;
+    }
+    // 在外部
+    else
+    {
+        // 采样四个方向的RCWB结果
+        // 这里需要采样四次
+        // 计算上一层的对应坐标
+        // 在上一层的块内像素坐标，+.25是为了让位置在中间
+        float2 positionLast = id.xy * 0.5 + 0.25;
+        uint2 blockDim = _RCWB_CascadeResolution / 2;
+        half4 weight = 0;
+        half3 radSum = 0;
+        for (int i = 0; i < 4; ++i)
+        {
+            // 对应的上一层的块本身的像素坐标偏移
+            float2 positionLastOffset = float2(fmod(i , 2), floor(i / 2));
+            positionLastOffset *= blockDim;
+            // 把这个像素坐标clamp一下防止采样到隔壁的块
+            //positionLast = clamp(positionLast, 0.5, blockDim * 0.5 - 0.5);
+            float2 samplePos = positionLast + positionLastOffset;
+            float2 sampleUV = samplePos / _RCWB_CascadeResolution;
+            // 采样上一层的块
+            float3 rad = SAMPLE_TEXTURE2D_LOD(_RCWB_FourDirResult, sampler_RCWB_FourDirResult, sampleUV, 0).xyz;
+            radSum += Avg3(rad.x, rad.y, rad.z);
+            weight[i] = Avg3(rad.x, rad.y, rad.z);
+        }
+        half2 ansDir = 0;
+        for (int i = 0; i < 4; ++i){
+            ansDir += fourDirs[i] * weight[i];
+        }
+        if (length(ansDir) <= 0.0001){
+            ansDir = 0;
+        }else{
+            ansDir = normalize(ansDir);
+        }
+        Direction[id.xy] = ansDir;
+    }
+
+#endif
+}
+
+
+
+
+// 输入输出绑定
+TEXTURE2D(_RCWB_BlurInput);
+SAMPLER(sampler_RCWB_BlurInput);
+RWTexture2D<half4> _RCWB_BlurOutput;
+
+// 当前 Pass 的分辨率参数（因为每层分辨率不同，不能用全局的 _RCWB_CascadeResolution）
+float2 _RCWB_InputResolution;
+float2 _RCWB_OutputResolution;
+
+// 升采样时的模糊散布半径（默认传 1.0，越大越柔和但可能会有轻微失真）
+float _RCWB_BlurRadius;
+
+// ---------------------------------------------------------
+// 阶段 1：降采样 (Downsample)
+// 使用 4-Tap 滤波器，采样中心点周围的 4 个半像素位置
+// ---------------------------------------------------------
+[numthreads(8, 8, 1)]
+void KawaseDownsample(uint3 id : SV_DispatchThreadID)
+{
+    // 剔除越界线程 (基于当前的输出分辨率)
+    if (id.x >= (uint)_RCWB_OutputResolution.x || id.y >= (uint)_RCWB_OutputResolution.y)
+        return;
+
+    // 输出像素的中心 UV
+    float2 uv = (id.xy + 0.5) / _RCWB_OutputResolution;
+    
+    // 输入纹理的半像素偏移量
+    float2 halfPixel = 0.5 / _RCWB_InputResolution;
+
+    half4 sum = 0;
+    // 采样四个角落 (硬件 Sampler 会自动进行双线性插值，相当于收集了 16 个像素的信息)
+    sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2(-halfPixel.x, -halfPixel.y), 0);
+    sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2( halfPixel.x, -halfPixel.y), 0);
+    sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2( halfPixel.x,  halfPixel.y), 0);
+    sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2(-halfPixel.x,  halfPixel.y), 0);
+
+    _RCWB_BlurOutput[id.xy] = sum * 0.25; // 取平均
+}
+
+// ---------------------------------------------------------
+// 阶段 2：升采样 (Upsample)
+// 经典的 ARM Mali 优化 8-Tap 滤波器，产生完美的柔和过渡
+// ---------------------------------------------------------
+[numthreads(8, 8, 1)]
+void KawaseUpsample(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_RCWB_OutputResolution.x || id.y >= (uint)_RCWB_OutputResolution.y)
+        return;
+
+    float2 uv = (id.xy + 0.5) / _RCWB_OutputResolution;
+    
+    // 根据设定的散布半径计算偏移 (通常 _RCWB_BlurRadius = 1.0)
+    float2 halfPixel = _RCWB_BlurRadius / _RCWB_InputResolution;
+
+    half4 sum = 0;
+    
+    // 内部十字 (权重 2.0) + 外部角落 (权重 1.0)，总权重为 12.0
+    sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2(-halfPixel.x * 2.0, 0.0), 0);
+    sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2(-halfPixel.x, halfPixel.y), 0) * 2.0;
+    sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2(0.0, halfPixel.y * 2.0), 0);
+    sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2(halfPixel.x, halfPixel.y), 0) * 2.0;
+    sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2(halfPixel.x * 2.0, 0.0), 0);
+    sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2(halfPixel.x, -halfPixel.y), 0) * 2.0;
+    sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2(0.0, -halfPixel.y * 2.0), 0);
+    sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2(-halfPixel.x, -halfPixel.y), 0) * 2.0;
+
+    _RCWB_BlurOutput[id.xy] = sum / 12.0;
+}
+
+
+RWTexture2D<half4> _RCWB_LightResult_NonBlurred_Postprocess;
+Texture2D<half4> _RCWB_LightResult_Blurred_Postprocess;
+RWTexture2D<half2> _RCWB_Direction_NonBlurred_Postprocess;
+Texture2D<half2> _RCWB_Direction_Blurred_Postprocess;
+
+[numthreads(8, 8, 1)]
+void PostprocessMain (uint3 id : SV_DispatchThreadID){
+    if (id.x >= _CameraResolution_Full.x || id.y >= _CameraResolution_Full.y)
+        return;
+    
+    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
+    bool isInsideSprite = IsInsideSprite(posWS);
+    if (isInsideSprite)
+    {
+        _RCWB_LightResult_NonBlurred_Postprocess[id.xy] = _RCWB_LightResult_Blurred_Postprocess[id.xy];
+
+        half2 direction = _RCWB_Direction_Blurred_Postprocess[id.xy];
+        if (length(direction) <= 0.0001){
+            direction = 0;
+        }else{
+            direction = normalize(direction);
+        }
+        _RCWB_Direction_NonBlurred_Postprocess[id.xy] = direction;
+    }
 }

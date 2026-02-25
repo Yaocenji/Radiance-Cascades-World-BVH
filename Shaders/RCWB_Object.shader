@@ -43,6 +43,9 @@
             // 引入 URP 核心库
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
+            // RCWB库
+            #include "RCW_BVH_Inc.hlsl"
+
             // ---------------------------------------------------------
             // 1. CBUFFER 定义 (严格匹配 SRP Batcher)
             // ---------------------------------------------------------
@@ -99,9 +102,16 @@
                 
                 half3 finalColor = albedo.rgb * IN.color;
 
-                //finalColor = float3(IN.uv, 0);
+                // 世界空间
+                //float2 posWS = posPixel2World(IN.positionCS.xy, _ScreenParams.xy);
+                // 屏幕空间uv
+                float2 screenUV = IN.positionCS.xy / _ScreenParams.xy;
+
+                RcwbLightData light = GetRcwbLightData(screenUV,  _ScreenParams.xy);
+
+                half3 ansColor = albedo.xyz * light.color;
                 
-                return half4(finalColor, albedo.a * IN.color.a);
+                return half4(ansColor, albedo.a);
             }
             ENDHLSL
         }

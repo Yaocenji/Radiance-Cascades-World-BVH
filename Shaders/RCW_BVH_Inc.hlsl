@@ -467,3 +467,93 @@ float2 WorldToAtlasUV(in float2 worldPoint, in float4 uvMatrix, in float2 uvTran
 
 
 
+
+// 摄像机矩阵
+float4x4 MatrixInvVP;
+float4x4 MatrixVP;
+
+// 像素坐标和世界空间的转换
+float2 posPixel2World(float2 pixelPos, float2 screenParam)
+{
+    float2 uv = pixelPos / screenParam;
+    float2 ndc = uv * 2.0 - 1.0;
+    #if UNITY_UV_STARTS_AT_TOP
+    ndc.y = -ndc.y;
+    #endif
+    float deviceDepth = 0.0;
+    float4 clipPos = float4(ndc, deviceDepth, 1.0);
+    float4 posWSRaw = mul(MatrixInvVP, clipPos);
+    float2 posWS = posWSRaw.xy / posWSRaw.w;
+    return posWS;
+}
+float2 posWorld2Pixel(float3 worldPos, float2 screenParam)
+{
+    // 1. 世界空间 -> 裁剪空间 (Clip Space)
+    float4 clipPos = mul(MatrixVP, float4(worldPos, 1.0));
+    // 也可以使用 URP 内置函数: float4 clipPos = TransformWorldToHClip(worldPos);
+
+    // 2. 裁剪空间 -> NDC (-1 ~ 1)
+    float2 ndc = clipPos.xy / clipPos.w;
+
+    // 3. 处理平台差异 (Y轴翻转)
+    // 逻辑与 forward 函数完全一致：
+    // 如果之前为了匹配 NDC 翻转了 Y，现在为了变回屏幕 UV，需要再次翻转回来
+    #if UNITY_UV_STARTS_AT_TOP
+    ndc.y = -ndc.y;
+    #endif
+
+    // 4. NDC -> UV (0 ~ 1)
+    float2 uv = ndc * 0.5 + 0.5;
+
+    // 5. UV -> 屏幕像素坐标
+    float2 pixelPos = uv * screenParam;
+
+    return pixelPos;
+}
+
+
+// 辅助函数：判断一个点是否在Sprite内部
+bool IsInsideSprite(float2 posWS)
+{
+    // 1. 构建一条任意方向的极短测试射线
+    RayWS testRay;
+    testRay.Origin = posWS;
+    testRay.Direction = float2(1.0, 1.0);
+
+    IntersectsRaySegmentResult result;
+    if (IntersectRayBVH(testRay, result))
+    {
+        if (dot(result.hitNormal, testRay.Direction) > 0.0)
+            return true;
+    }
+    return false;
+}
+
+TEXTURE2D(_RCWB_LightResult);
+SAMPLER(sampler_RCWB_LightResult);
+TEXTURE2D(_RCWB_DirectionResult);
+SAMPLER(sampler_RCWB_DirectionResult);
+
+// 向shader开放的函数
+struct RcwbLightData{
+    half3 color;
+    half2 direction;
+    bool hasDirection;
+};
+
+RcwbLightData GetRcwbLightData(float2 uv, float2 targetRenderSize){
+    // 先计算像素坐标和世界坐标
+    float2 pixelPos = uv * targetRenderSize;
+    float2 posWS = posPixel2World(pixelPos, targetRenderSize);
+
+    // 先全部采样纹理
+    half4 lightColor = SAMPLE_TEXTURE2D(_RCWB_LightResult, sampler_RCWB_LightResult, uv);
+    half2 direction = SAMPLE_TEXTURE2D(_RCWB_DirectionResult, sampler_RCWB_DirectionResult, uv);
+
+    RcwbLightData data;
+    data.color = lightColor.rgb;
+    data.direction = direction;
+    data.hasDirection = length(direction) > 0.0001;
+
+    return data;
+}
