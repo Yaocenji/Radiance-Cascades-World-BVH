@@ -23,17 +23,62 @@ namespace RadianceCascadesWorldBVH
         
         private SpriteRenderer spriteRenderer;
         
+        private MaterialPropertyBlock mpb;
+        private static readonly int RotationSinCosID = Shader.PropertyToID("_RotationSinCos");
+        
         public Vector4 UVMatrix => uvMatrix;
         public Vector2 UVTranslation => uvTranslation;
         
         private void Awake()
         {
             spriteRenderer = GetComponent<SpriteRenderer>();
+            mpb = new MaterialPropertyBlock();
+        }
+        
+        private void OnEnable()
+        {
+            // 向 PolygonManager 注册
+            if (PolygonManager.Instance != null)
+            {
+                if (spriteRenderer == null)
+                    spriteRenderer = GetComponent<SpriteRenderer>();
+                    
+                PolygonManager.Instance.Register(this, spriteRenderer);
+            }
+        }
+        
+        private void OnDisable()
+        {
+            // 从 PolygonManager 反注册
+            if (PolygonManager.Instance != null)
+            {
+                PolygonManager.Instance.Unregister(this);
+            }
         }
 
         private void Update()
         {
             ComputeWorldToAtlasUVTransform();
+            UpdateMaterialPropertyBlock();
+        }
+        
+        private void UpdateMaterialPropertyBlock()
+        {
+            if (spriteRenderer == null) return;
+            
+            // 先获取 SpriteRenderer 当前的 MPB（保留其他脚本或 Unity 内部设置的属性）
+            spriteRenderer.GetPropertyBlock(mpb);
+            
+            // 计算 z 轴旋转的 cos 和 sin
+            float rotationZ = -1 * transform.eulerAngles.z * Mathf.Deg2Rad;
+            float cosZ = Mathf.Cos(rotationZ);
+            float sinZ = Mathf.Sin(rotationZ);
+            
+            // 设置旋转属性 (x = cos, y = sin)
+            mpb.SetVector(RotationSinCosID, new Vector4(cosZ, sinZ, 0f, 0f));
+            
+            // 应用回 SpriteRenderer
+            spriteRenderer.SetPropertyBlock(mpb);
         }
         
         /// <summary>

@@ -91,6 +91,9 @@ namespace RadianceCascadesWorldBVH
     
     public class PolygonManager : MonoBehaviour
     {
+        // 静态实例，用于 RCWBObject 的注册/反注册
+        public static PolygonManager Instance { get; private set; }
+        
         [Header("Debug Settings")]
         // 每一层深度的颜色，如果深度超过列表长度，会循环使用
         public List<BVHDrawParam> depthColors = new List<BVHDrawParam>() 
@@ -105,11 +108,9 @@ namespace RadianceCascadesWorldBVH
         };
         
         [Header("BVH Settings")]
-        // 这么脚本目前完全以极低性能运行
-        // 因为序列帧动画工作流没有接入
-        // 要参与BVH的物体
-        public List<SpriteRenderer> spriteRenderers;
-        public List<RCWBObject> rcwObjects;
+        // 要参与BVH的物体（通过注册机制自动管理）
+        private List<SpriteRenderer> spriteRenderers = new List<SpriteRenderer>();
+        private List<RCWBObject> rcwObjects = new List<RCWBObject>();
         
         // 场景包围盒
         public Vector4 sceneAABB;
@@ -146,10 +147,85 @@ namespace RadianceCascadesWorldBVH
             return area * 0.5f;
         }
         
+        private void Awake()
+        {
+            // 设置单例实例
+            if (Instance != null && Instance != this)
+            {
+                Debug.LogWarning("PolygonManager: 场景中存在多个实例，销毁重复的实例。");
+                Destroy(gameObject);
+                return;
+            }
+            Instance = this;
+        }
+        
         void Start()
         {
+            // 扫描场景中所有活跃的 RCWBObject，处理启动顺序导致的未注册情况
+            ScanAndRegisterExistingObjects();
+            
             bvhConstructor = new PolygonBVHConstructor(edges, spriteRenderers);
             bvhConstructorAccelerated = new PolygonBVHConstructorAccelerated(edges, spriteRenderers);
+        }
+        
+        /// <summary>
+        /// 扫描场景中所有活跃的 RCWBObject 并注册（用于处理启动顺序问题）
+        /// </summary>
+        private void ScanAndRegisterExistingObjects()
+        {
+            RCWBObject[] existingObjects = FindObjectsByType<RCWBObject>(FindObjectsSortMode.None);
+            foreach (var obj in existingObjects)
+            {
+                if (obj.isActiveAndEnabled)
+                {
+                    SpriteRenderer sr = obj.GetComponent<SpriteRenderer>();
+                    if (sr != null)
+                    {
+                        Register(obj, sr);
+                    }
+                }
+            }
+        }
+        
+        /// <summary>
+        /// 注册一个 RCWBObject 及其对应的 SpriteRenderer
+        /// </summary>
+        /// <param name="rcwbObject">要注册的 RCWBObject</param>
+        /// <param name="spriteRenderer">对应的 SpriteRenderer（必须挂载在同一物体上）</param>
+        public void Register(RCWBObject rcwbObject, SpriteRenderer spriteRenderer)
+        {
+            if (rcwbObject == null || spriteRenderer == null)
+            {
+                Debug.LogWarning("PolygonManager.Register: rcwbObject 或 spriteRenderer 为空，跳过注册。");
+                return;
+            }
+            
+            // 检查是否已经注册
+            if (rcwObjects.Contains(rcwbObject))
+            {
+                return;
+            }
+            
+            // 同时添加到两个列表，保证一一对应
+            rcwObjects.Add(rcwbObject);
+            spriteRenderers.Add(spriteRenderer);
+        }
+        
+        /// <summary>
+        /// 反注册一个 RCWBObject
+        /// </summary>
+        /// <param name="rcwbObject">要反注册的 RCWBObject</param>
+        public void Unregister(RCWBObject rcwbObject)
+        {
+            if (rcwbObject == null) return;
+            
+            int index = rcwObjects.IndexOf(rcwbObject);
+            if (index >= 0)
+            {
+                // 同时从两个列表移除，保证一一对应
+                rcwObjects.RemoveAt(index);
+                spriteRenderers.RemoveAt(index);
+            }
         }
         
         /// <summary>
@@ -305,6 +381,12 @@ namespace RadianceCascadesWorldBVH
             gpuNodeEdgeBuffer?.Release();
             materialBuffer?.Release();
             bvhConstructorAccelerated?.Dispose();
+            
+            // 清理单例引用
+            if (Instance == this)
+            {
+                Instance = null;
+            }
         }
         
         
