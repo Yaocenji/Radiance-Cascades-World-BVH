@@ -139,7 +139,7 @@
 
                 half3 ansColor = albedo.xyz * light.color * lambert;
                 
-                return half4(ansColor, albedo.a);
+                return half4(ansColor, albedo.a * IN.color.a);
             }
             ENDHLSL
         }

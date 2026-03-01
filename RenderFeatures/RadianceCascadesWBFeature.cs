@@ -219,28 +219,47 @@ namespace RadianceCascadesWorldBVH
 
                 // cmd.EndSample("Manual Stencil");
                 // Dual Kawase Blur 阶段
-                cmd.BeginSample("Dual Kawase Blur");
+                cmd.BeginSample("Invasion");
+
+                int invasionLightKernalHandle = rcShader.FindKernel("InvasionLightMain");
+                cmd.SetComputeTextureParam(rcShader, invasionLightKernalHandle, "_RCWB_LightResult_NonInvasion", ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_0 : m_Rcwb_Handle_1);
+                cmd.SetComputeTextureParam(rcShader, invasionLightKernalHandle, "_RCWB_LightResult_Invasion", ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_1 : m_Rcwb_Handle_0);
+                cmd.DispatchCompute(rcShader, invasionLightKernalHandle, (rcWidth + 7) / 8, (rcHeight + 7) / 8, 1);
+
+                cmd.CopyTexture(((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_1 : m_Rcwb_Handle_0, 
+                                ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_0 : m_Rcwb_Handle_1);
+
+                int invasionDirectionKernalHandle = rcShader.FindKernel("InvasionDirectionMain");
+                cmd.SetComputeTextureParam(rcShader, invasionDirectionKernalHandle, "_RCWB_Direction_NonInvasion", m_Rcwb_Direction);
+                cmd.SetComputeTextureParam(rcShader, invasionDirectionKernalHandle, "_RCWB_Direction_Invasion", m_Rcwb_Direction_Blur);
+                cmd.DispatchCompute(rcShader, invasionDirectionKernalHandle, (rcWidth + 7) / 8, (rcHeight + 7) / 8, 1);
+
+                cmd.CopyTexture(m_Rcwb_Direction_Blur, m_Rcwb_Direction);
+                
+                cmd.EndSample("Invasion");
+                cmd.BeginSample("Dual Kawase Blur & Postprocess");
                 
                 ExecuteDualKawaseBlur(cmd, ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_0 : m_Rcwb_Handle_1, ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_1 : m_Rcwb_Handle_0, rcWidth, rcHeight, settings.blurIterations, settings.blurRadius);
-                
+
+                // int postprocessKernalHandle = rcShader.FindKernel("PostprocessLightMain");
+                // cmd.SetComputeTextureParam(rcShader, postprocessKernalHandle, "_RCWB_LightResult_NonBlurred_Postprocess", ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_0 : m_Rcwb_Handle_1);
+                // cmd.SetComputeTextureParam(rcShader, postprocessKernalHandle, "_RCWB_LightResult_Blurred_Postprocess", m_KawasePyramid[0]);
+                // cmd.DispatchCompute(rcShader, postprocessKernalHandle, (rcWidth + 7) / 8, (rcHeight + 7) / 8, 1);
+
                 ExecuteDualKawaseBlur(cmd, m_Rcwb_Direction, m_Rcwb_Direction_Blur, rcWidth, rcHeight, settings.blurIterations, settings.blurRadius);
 
-                cmd.EndSample("Dual Kawase Blur");
-                cmd.BeginSample("Postprocess");
+                // int postprocessDirectionKernalHandle = rcShader.FindKernel("PostprocessDirectionMain");
+                // cmd.SetComputeTextureParam(rcShader, postprocessDirectionKernalHandle, "_RCWB_Direction_NonBlurred_Postprocess", m_Rcwb_Direction);
+                // cmd.SetComputeTextureParam(rcShader, postprocessDirectionKernalHandle, "_RCWB_Direction_Blurred_Postprocess", m_KawasePyramid[0]);
+                // cmd.DispatchCompute(rcShader, postprocessDirectionKernalHandle, (rcWidth + 7) / 8, (rcHeight + 7) / 8, 1);
 
-                int postprocessKernalHandle = rcShader.FindKernel("PostprocessMain");
-                cmd.SetComputeTextureParam(rcShader, postprocessKernalHandle, "_RCWB_LightResult_NonBlurred_Postprocess", ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_0 : m_Rcwb_Handle_1);
-                cmd.SetComputeTextureParam(rcShader, postprocessKernalHandle, "_RCWB_LightResult_Blurred_Postprocess", ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_1 : m_Rcwb_Handle_0);
-                cmd.SetComputeTextureParam(rcShader, postprocessKernalHandle, "_RCWB_Direction_NonBlurred_Postprocess", m_Rcwb_Direction);
-                cmd.SetComputeTextureParam(rcShader, postprocessKernalHandle, "_RCWB_Direction_Blurred_Postprocess", m_Rcwb_Direction_Blur);
-                cmd.DispatchCompute(rcShader, postprocessKernalHandle, (rcWidth + 7) / 8, (rcHeight + 7) / 8, 1);
-
-                cmd.EndSample("Postprocess");
+                cmd.EndSample("Dual Kawase Blur & Postprocess");
                 cmd.BeginSample("After RCWB");
 
                 // 获取颜色结果
                 // 奇数次是handle0，偶数次是handle1
                 var lightResultHandle = ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_0 : m_Rcwb_Handle_1;
+                var lightResultHandleBlur = ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_1 : m_Rcwb_Handle_0;
                 
                 //RTHandle cameraColorTargetHandle = renderingData.cameraData.renderer.cameraColorTargetHandle;
                 //Blitter.BlitCameraTexture(cmd, m_Rcwb_Direction, cameraColorTargetHandle, 0f, true);
@@ -255,7 +274,9 @@ namespace RadianceCascadesWorldBVH
                 cmd.SetGlobalFloat("_RCWB_RayRange_WS", settings.rayRange);
                 // 最后的最后：将光源和方向的纹理绑定，让后续的渲染中能够采样到
                 cmd.SetGlobalTexture("_RCWB_LightResult", lightResultHandle);
+                cmd.SetGlobalTexture("_RCWB_LightResult_Blur", lightResultHandleBlur);
                 cmd.SetGlobalTexture("_RCWB_DirectionResult", m_Rcwb_Direction);
+                cmd.SetGlobalTexture("_RCWB_DirectionResult_Blur", m_Rcwb_Direction_Blur);
                 
                 cmd.EndSample("After RCWB");
                 

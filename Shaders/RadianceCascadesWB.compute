@@ -6,7 +6,11 @@
 #pragma kernel KawaseDownsample
 #pragma kernel KawaseUpsample
 
-#pragma kernel PostprocessMain
+#pragma kernel PostprocessLightMain
+#pragma kernel PostprocessDirectionMain
+
+#pragma kernel InvasionLightMain
+#pragma kernel InvasionDirectionMain
 
 // 满分辨率
 uint2 _CameraResolution_Full;
@@ -160,7 +164,11 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
                 float dist = length(currInterval.end - currInterval.start);
                 float segmentTransmittance = exp(-dist * currMatData.Density);
                 
-                float3 segmentLight = currMatData.Emission.rgb * defaultAnsRadiance.w;
+                // 采样一下atlas
+                float2 atlasUV = WorldToAtlasUV(currInterval.start, currMatData.uvMatrix, currMatData.uvTranslation);
+                float3 sampleColor = SAMPLE_TEXTURE2D_LOD(_RCWB_Atlas, sampler_RCWB_Atlas, atlasUV, 0);
+
+                float3 segmentLight = sampleColor * currMatData.Emission.rgb * defaultAnsRadiance.w;
                 
                 defaultAnsRadiance.xyz += segmentLight;
                 defaultAnsRadiance.w *= segmentTransmittance;
@@ -211,9 +219,12 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
 
     // 额外的：如果是最后一次，那么需要根据是否在sprite内部
     bool isInsideSprite = IsInsideSprite(posWS);
-    if (_RCWB_CascadeLevel == 0 && isInsideSprite)
+    if (_RCWB_CascadeLevel == 0)
     {
-        finalResults = float4(0, 0, 0, 1);
+        if (isInsideSprite)
+            finalResults = float4(0, 0, 0, 0);
+        else
+            finalResults.w = 1;
     }
 
     Result[id.xy] = finalResults;
@@ -413,27 +424,187 @@ void KawaseUpsample(uint3 id : SV_DispatchThreadID)
 
 
 RWTexture2D<half4> _RCWB_LightResult_NonBlurred_Postprocess;
-Texture2D<half4> _RCWB_LightResult_Blurred_Postprocess;
-RWTexture2D<half2> _RCWB_Direction_NonBlurred_Postprocess;
-Texture2D<half2> _RCWB_Direction_Blurred_Postprocess;
+TEXTURE2D(_RCWB_LightResult_Blurred_Postprocess);
+SAMPLER(sampler_RCWB_LightResult_Blurred_Postprocess);
 
 [numthreads(8, 8, 1)]
-void PostprocessMain (uint3 id : SV_DispatchThreadID){
-    if (id.x >= _CameraResolution_Full.x || id.y >= _CameraResolution_Full.y)
+void PostprocessLightMain (uint3 id : SV_DispatchThreadID){
+    if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
         return;
     
     float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
     bool isInsideSprite = IsInsideSprite(posWS);
     if (isInsideSprite)
     {
-        _RCWB_LightResult_NonBlurred_Postprocess[id.xy] = _RCWB_LightResult_Blurred_Postprocess[id.xy];
+        float2 uv = (float2)id.xy / (float2)_RCWB_CascadeResolution;
+        _RCWB_LightResult_NonBlurred_Postprocess[id.xy] = SAMPLE_TEXTURE2D_LOD(_RCWB_LightResult_Blurred_Postprocess, sampler_RCWB_LightResult_Blurred_Postprocess, uv, 0);
 
-        half2 direction = _RCWB_Direction_Blurred_Postprocess[id.xy];
+        // // 用预乘透明度归一化，让的物体边缘内外亮度一致
+        if (_RCWB_LightResult_NonBlurred_Postprocess[id.xy].w > 0.001){
+            _RCWB_LightResult_NonBlurred_Postprocess[id.xy] /= _RCWB_LightResult_NonBlurred_Postprocess[id.xy].w;}
+
+
+    }
+}
+
+
+RWTexture2D<half2> _RCWB_Direction_NonBlurred_Postprocess;
+TEXTURE2D(_RCWB_Direction_Blurred_Postprocess);
+SAMPLER(sampler_RCWB_Direction_Blurred_Postprocess);
+
+[numthreads(8, 8, 1)]
+void PostprocessDirectionMain (uint3 id : SV_DispatchThreadID){
+    if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
+        return;
+    
+    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
+    bool isInsideSprite = IsInsideSprite(posWS);
+    if (isInsideSprite)
+    {
+        float2 uv = (float2)id.xy / (float2)_RCWB_CascadeResolution;
+        half2 direction = SAMPLE_TEXTURE2D_LOD(_RCWB_Direction_Blurred_Postprocess, sampler_RCWB_Direction_Blurred_Postprocess, uv, 0);
         if (length(direction) <= 0.0001){
             direction = 0;
         }else{
             direction = normalize(direction);
         }
         _RCWB_Direction_NonBlurred_Postprocess[id.xy] = direction;
+    }
+}
+
+Texture2D<half4> _RCWB_LightResult_NonInvasion;
+RWTexture2D<half4> _RCWB_LightResult_Invasion;
+
+[numthreads(8, 8, 1)]
+void InvasionLightMain (uint3 id : SV_DispatchThreadID){
+    if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
+        return;
+    
+    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
+    bool isInsideSprite = IsInsideSprite(posWS);
+    if (isInsideSprite)
+    {
+        // 在sprite内部，使用侵入算法
+        // 第一层是距离为1的
+        const int2 offset_dist1[4] = {
+            int2(1, 0),
+            int2(0, 1),
+            int2(-1, 0),
+            int2(0, -1)
+        };
+        bool4 notBlack_dist1 = false;
+
+        // 第二层是距离为根号2的
+        const int2 offset_dist2[4] = {
+            int2(1, 1),
+            int2(-1, 1),
+            int2(-1, -1),
+            int2(1, -1)
+        };
+        bool4 notBlack_dist2 = false;
+
+        [unroll]
+        for (int i = 0; i < 4; ++i){
+            notBlack_dist1[i] = length(_RCWB_LightResult_NonInvasion[id.xy + offset_dist1[i]]) > 0.0001;
+            notBlack_dist2[i] = length(_RCWB_LightResult_NonInvasion[id.xy + offset_dist2[i]]) > 0.0001;
+        }
+
+        if (any(notBlack_dist1)){
+            half4 ans = 0;
+            float cnt = 0;
+            [unroll]
+            for (int i = 0; i < 4; ++i){
+                ans += notBlack_dist1[i] * _RCWB_LightResult_NonInvasion[id.xy + offset_dist1[i]];
+                cnt += (float)notBlack_dist1[i];
+            }
+            ans /= cnt;
+            _RCWB_LightResult_Invasion[id.xy] = ans;
+        }
+        else if (any(notBlack_dist2)){
+            half4 ans = 0;
+            float cnt = 0;
+            [unroll]
+            for (int i = 0; i < 4; ++i){
+                ans += notBlack_dist2[i] * _RCWB_LightResult_NonInvasion[id.xy + offset_dist2[i]];
+                cnt += (float)notBlack_dist2[i];
+            }
+            ans /= cnt;
+            _RCWB_LightResult_Invasion[id.xy] = ans;
+        }
+        else{
+            _RCWB_LightResult_Invasion[id.xy] = 0;
+        }
+    }
+    else{
+        _RCWB_LightResult_Invasion[id.xy] = _RCWB_LightResult_NonInvasion[id.xy];
+    }
+}
+
+
+Texture2D<half2> _RCWB_Direction_NonInvasion;
+RWTexture2D<half2> _RCWB_Direction_Invasion;
+
+[numthreads(8, 8, 1)]
+void InvasionDirectionMain (uint3 id : SV_DispatchThreadID){
+    if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
+        return;
+    
+    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
+    bool isInsideSprite = IsInsideSprite(posWS);
+    if (isInsideSprite)
+    {
+        // 在sprite内部，使用侵入算法
+        // 第一层是距离为1的
+        const int2 offset_dist1[4] = {
+            int2(1, 0),
+            int2(0, 1),
+            int2(-1, 0),
+            int2(0, -1)
+        };
+        bool4 notBlack_dist1 = false;
+
+        // 第二层是距离为根号2的
+        const int2 offset_dist2[4] = {
+            int2(1, 1),
+            int2(-1, 1),
+            int2(-1, -1),
+            int2(1, -1)
+        };
+        bool4 notBlack_dist2 = false;
+
+        [unroll]
+        for (int i = 0; i < 4; ++i){
+            notBlack_dist1[i] = length(_RCWB_Direction_NonInvasion[id.xy + offset_dist1[i]]) > 0.0001;
+            notBlack_dist2[i] = length(_RCWB_Direction_NonInvasion[id.xy + offset_dist2[i]]) > 0.0001;
+        }
+
+        if (any(notBlack_dist1)){
+            half2 ans = 0;
+            float cnt = 0;
+            [unroll]
+            for (int i = 0; i < 4; ++i){
+                ans += notBlack_dist1[i] * _RCWB_Direction_NonInvasion[id.xy + offset_dist1[i]];
+                cnt += (float)notBlack_dist1[i];
+            }
+            ans /= cnt;
+            _RCWB_Direction_Invasion[id.xy] = ans;
+        }
+        else if (any(notBlack_dist2)){
+            half2 ans = 0;
+            float cnt = 0;
+            [unroll]
+            for (int i = 0; i < 4; ++i){
+                ans += notBlack_dist2[i] * _RCWB_Direction_NonInvasion[id.xy + offset_dist2[i]];
+                cnt += (float)notBlack_dist2[i];
+            }
+            ans /= cnt;
+            _RCWB_Direction_Invasion[id.xy] = ans;
+        }
+        else{
+            _RCWB_Direction_Invasion[id.xy] = 0;
+        }
+    }
+    else{
+        _RCWB_Direction_Invasion[id.xy] = _RCWB_Direction_NonInvasion[id.xy];
     }
 }

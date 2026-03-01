@@ -531,8 +531,13 @@ bool IsInsideSprite(float2 posWS)
 
 TEXTURE2D(_RCWB_LightResult);
 SAMPLER(sampler_RCWB_LightResult);
+TEXTURE2D(_RCWB_LightResult_Blur);
+SAMPLER(sampler_RCWB_LightResult_Blur);
+
 TEXTURE2D(_RCWB_DirectionResult);
 SAMPLER(sampler_RCWB_DirectionResult);
+TEXTURE2D(_RCWB_DirectionResult_Blur);
+SAMPLER(sampler_RCWB_DirectionResult_Blur);
 
 // 向shader开放的函数
 struct RcwbLightData{
@@ -545,15 +550,27 @@ RcwbLightData GetRcwbLightData(float2 uv, float2 targetRenderSize){
     // 先计算像素坐标和世界坐标
     float2 pixelPos = uv * targetRenderSize;
     float2 posWS = posPixel2World(pixelPos, targetRenderSize);
-
-    // 先全部采样纹理
-    half4 lightColor = SAMPLE_TEXTURE2D(_RCWB_LightResult, sampler_RCWB_LightResult, uv);
-    half2 direction = SAMPLE_TEXTURE2D(_RCWB_DirectionResult, sampler_RCWB_DirectionResult, uv);
+    bool isInsideSprite = IsInsideSprite(posWS);
 
     RcwbLightData data;
-    data.color = lightColor.rgb;
-    data.direction = direction;
-    data.hasDirection = length(direction) > 0.0001;
+
+    if (!isInsideSprite)
+    {
+        data.color = SAMPLE_TEXTURE2D(_RCWB_LightResult, sampler_RCWB_LightResult, uv).rgb;
+        data.direction = SAMPLE_TEXTURE2D(_RCWB_DirectionResult, sampler_RCWB_DirectionResult, uv);
+    }
+    else
+    {
+        data.color = SAMPLE_TEXTURE2D(_RCWB_LightResult_Blur, sampler_RCWB_LightResult_Blur, uv).rgb;
+        data.direction = SAMPLE_TEXTURE2D(_RCWB_DirectionResult_Blur, sampler_RCWB_DirectionResult_Blur, uv);
+    }
+    // // 先全部采样纹理
+    // half4 lightColor = SAMPLE_TEXTURE2D(_RCWB_LightResult, sampler_RCWB_LightResult, uv);
+    // half2 direction = SAMPLE_TEXTURE2D(_RCWB_DirectionResult, sampler_RCWB_DirectionResult, uv);
+
+    // data.color = lightColor.rgb;
+    // data.direction = direction;
+    data.hasDirection = length(data.direction) > 0.0001;
 
     return data;
 }
