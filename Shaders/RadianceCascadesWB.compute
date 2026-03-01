@@ -1,13 +1,9 @@
 
 #pragma kernel RadianceCascadeMain
-#pragma kernel ManualStencilFullResolutionMain
 #pragma kernel DirectionMain
 
 #pragma kernel KawaseDownsample
 #pragma kernel KawaseUpsample
-
-#pragma kernel PostprocessLightMain
-#pragma kernel PostprocessDirectionMain
 
 #pragma kernel InvasionLightMain
 #pragma kernel InvasionDirectionMain
@@ -254,26 +250,6 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
     //Result[id.xy] = float4(IsInsideSprite(posWS) ? 1.0f : 0.0f, 0, 0, 1);
 }
 
-TEXTURE2D(_RCWB_Result);
-SAMPLER(sampler_RCWB_Result);
-RWTexture2D <half> StencilFullResolution;
-[numthreads(8,8,1)]
-void ManualStencilFullResolutionMain (uint3 id : SV_DispatchThreadID){
-    if (id.x >= _CameraResolution_Full.x || id.y >= _CameraResolution_Full.y)
-        return;
-    float2 posWS = posPixel2World((float2)id.xy, (float2)_CameraResolution_Full);
-    bool isInsideSprite = IsInsideSprite(posWS);
-    if (isInsideSprite)
-    {
-        StencilFullResolution[id.xy] = 0.0h;
-    }
-    else
-    {
-        StencilFullResolution[id.xy] = 1.0h;
-    }
-    //StencilFullResolution[id.xy] = float4(float2(id.xy) / _CameraResolution_Full, 0, 1);
-}
-
 
 RWTexture2D <float2> Direction;
 
@@ -420,56 +396,6 @@ void KawaseUpsample(uint3 id : SV_DispatchThreadID)
     sum += SAMPLE_TEXTURE2D_LOD(_RCWB_BlurInput, sampler_RCWB_BlurInput, uv + float2(-halfPixel.x, -halfPixel.y), 0) * 2.0;
 
     _RCWB_BlurOutput[id.xy] = sum / 12.0;
-}
-
-
-RWTexture2D<half4> _RCWB_LightResult_NonBlurred_Postprocess;
-TEXTURE2D(_RCWB_LightResult_Blurred_Postprocess);
-SAMPLER(sampler_RCWB_LightResult_Blurred_Postprocess);
-
-[numthreads(8, 8, 1)]
-void PostprocessLightMain (uint3 id : SV_DispatchThreadID){
-    if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
-        return;
-    
-    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
-    bool isInsideSprite = IsInsideSprite(posWS);
-    if (isInsideSprite)
-    {
-        float2 uv = (float2)id.xy / (float2)_RCWB_CascadeResolution;
-        _RCWB_LightResult_NonBlurred_Postprocess[id.xy] = SAMPLE_TEXTURE2D_LOD(_RCWB_LightResult_Blurred_Postprocess, sampler_RCWB_LightResult_Blurred_Postprocess, uv, 0);
-
-        // // 用预乘透明度归一化，让的物体边缘内外亮度一致
-        if (_RCWB_LightResult_NonBlurred_Postprocess[id.xy].w > 0.001){
-            _RCWB_LightResult_NonBlurred_Postprocess[id.xy] /= _RCWB_LightResult_NonBlurred_Postprocess[id.xy].w;}
-
-
-    }
-}
-
-
-RWTexture2D<half2> _RCWB_Direction_NonBlurred_Postprocess;
-TEXTURE2D(_RCWB_Direction_Blurred_Postprocess);
-SAMPLER(sampler_RCWB_Direction_Blurred_Postprocess);
-
-[numthreads(8, 8, 1)]
-void PostprocessDirectionMain (uint3 id : SV_DispatchThreadID){
-    if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
-        return;
-    
-    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
-    bool isInsideSprite = IsInsideSprite(posWS);
-    if (isInsideSprite)
-    {
-        float2 uv = (float2)id.xy / (float2)_RCWB_CascadeResolution;
-        half2 direction = SAMPLE_TEXTURE2D_LOD(_RCWB_Direction_Blurred_Postprocess, sampler_RCWB_Direction_Blurred_Postprocess, uv, 0);
-        if (length(direction) <= 0.0001){
-            direction = 0;
-        }else{
-            direction = normalize(direction);
-        }
-        _RCWB_Direction_NonBlurred_Postprocess[id.xy] = direction;
-    }
 }
 
 Texture2D<half4> _RCWB_LightResult_NonInvasion;
