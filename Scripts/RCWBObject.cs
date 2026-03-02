@@ -25,6 +25,7 @@ namespace RadianceCascadesWorldBVH
         
         private MaterialPropertyBlock mpb;
         private static readonly int RotationSinCosID = Shader.PropertyToID("_RotationSinCos");
+        private static readonly int EmissionID = Shader.PropertyToID("_Emission");
         
         public Vector4 UVMatrix => uvMatrix;
         public Vector2 UVTranslation => uvTranslation;
@@ -76,6 +77,9 @@ namespace RadianceCascadesWorldBVH
             
             // 设置旋转属性 (x = cos, y = sin)
             mpb.SetVector(RotationSinCosID, new Vector4(cosZ, sinZ, 0f, 0f));
+
+            // 设置自发光属性
+            mpb.SetColor(EmissionID, Emission);
             
             // 应用回 SpriteRenderer
             spriteRenderer.SetPropertyBlock(mpb);

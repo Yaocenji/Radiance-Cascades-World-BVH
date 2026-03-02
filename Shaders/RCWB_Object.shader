@@ -7,7 +7,7 @@
         [PerRendererData] _BumpMap ("Normal Map", 2D) = "bump" {}
 
         [Header(Emission Data)]
-        [HDR] _EmissionColor ("Emission Color", Color) = (0,0,0,0)
+        [HDR] _Emission ("Emission Color", Color) = (0,0,0,0)
         
         [Header(Radiance Cascades Data)]
         _IsWall ("Is Wall (1=Block Light)", Float) = 1.0
@@ -52,8 +52,7 @@
             CBUFFER_START(UnityPerMaterial)
                 float4 _MainTex_ST;
                 float4 _BumpMap_ST;
-                half4 _EmissionColor;
-                half _IsWall;
+                half4 _Emission;
                 float2 _RotationSinCos; // x=cos, y=sin
             CBUFFER_END
 
@@ -125,9 +124,15 @@
                 // 屏幕空间uv
                 float2 screenUV = IN.positionCS.xy / _ScreenParams.xy;
 
-                RcwbLightData light = GetRcwbLightData(screenUV,  _ScreenParams.xy);
+                bool isInsideSprite = false;
 
-                
+                RcwbLightData light = GetRcwbLightData(screenUV,  _ScreenParams.xy, isInsideSprite);
+
+                if (isInsideSprite && length(_Emission.rgb) > 0.0001f)
+                {
+                    light.color = _Emission.rgb;
+                }
+
                 half4 packednorm = SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, IN.uv);
                 half3 unpackednorm = UnpackNormal(packednorm);
                 unpackednorm = normalize(unpackednorm);
@@ -138,6 +143,9 @@
                 half lambert = dot(normalWS, realDirection);
 
                 half3 ansColor = albedo.xyz * light.color * lambert;
+
+                // debug:
+                // ansColor = _Emission.rgb;
                 
                 return half4(ansColor, albedo.a * IN.color.a);
             }

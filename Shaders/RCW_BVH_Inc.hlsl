@@ -546,11 +546,11 @@ struct RcwbLightData{
     bool hasDirection;
 };
 
-RcwbLightData GetRcwbLightData(float2 uv, float2 targetRenderSize){
+RcwbLightData GetRcwbLightData(float2 uv, float2 targetRenderSize, out bool isInsideSprite){
     // 先计算像素坐标和世界坐标
     float2 pixelPos = uv * targetRenderSize;
     float2 posWS = posPixel2World(pixelPos, targetRenderSize);
-    bool isInsideSprite = IsInsideSprite(posWS);
+    isInsideSprite = IsInsideSprite(posWS);
 
     RcwbLightData data;
 
