@@ -1,0 +1,25 @@
+{
+  "name": "yaocenji.radiance-cascades",
+  "version": "1.0.0",
+  "displayName": "Radiance Cascades World BVH",
+  "description": "A real-time 2D Global Illumination system for Unity, combining the Radiance Cascades algorithm with BVH (Bounding Volume Hierarchy) acceleration for efficient ray-scene intersection in 2D sprite-based worlds.",
+  "unity": "2022.3",
+  "documentationUrl": "https://github.com/Yaocenji/Radiance-Cascades-World-BVH.git",
+  "keywords": [
+    "urp",
+    "2d",
+    "rendering",
+    "gi",
+    "radiance cascades",
+    "BVH"
+  ],
+  "author": {
+    "name": "Yaocenji",
+    "email": "yaocenji@gmail.com"
+  },
+  "dependencies": {
+    "com.unity.render-pipelines.universal": "14.0.11",
+    "com.unity.render-pipelines.core": "14.0.11",
+    "com.unity.burst": "1.8.19"
+  }
+}

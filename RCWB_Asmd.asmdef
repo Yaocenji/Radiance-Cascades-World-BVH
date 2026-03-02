@@ -1,0 +1,23 @@
+{
+    "name": "RCWB_Asmd",
+    "rootNamespace": "",
+    "references": [
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.Burst",
+        "Unity.Burst.CodeGen",
+        "Unity.Collections.BurstCompatibilityGen",
+        "Unity.Mathematics",
+        "Unity.RenderPipeline.Universal.ShaderLibrary",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.Collections"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
