@@ -1,5 +1,5 @@
 {
-  "name": "yaocenji.radiance-cascades",
+  "name": "yaocenji.radiance-cascades-world-bvh",
   "version": "1.0.0",
   "displayName": "Radiance Cascades World BVH",
   "description": "A real-time 2D Global Illumination system for Unity, combining the Radiance Cascades algorithm with BVH (Bounding Volume Hierarchy) acceleration for efficient ray-scene intersection in 2D sprite-based worlds.",
