@@ -38,20 +38,30 @@ namespace RadianceCascadesWorldBVH
         
         private void OnEnable()
         {
-            // 向 PolygonManager 注册
-            if (PolygonManager.Instance != null)
+            if (spriteRenderer == null)
+                spriteRenderer = GetComponent<SpriteRenderer>();
+            
+            // 优先向 PolygonManagerCore 注册（PlayerLoop 驱动，无需场景挂载）
+            if (PolygonManagerCore.Instance != null)
             {
-                if (spriteRenderer == null)
-                    spriteRenderer = GetComponent<SpriteRenderer>();
-                    
+                PolygonManagerCore.Instance.Register(this, spriteRenderer);
+            }
+            // 兼容旧的 PolygonManager（场景挂载模式）
+            else if (PolygonManager.Instance != null)
+            {
                 PolygonManager.Instance.Register(this, spriteRenderer);
             }
         }
         
         private void OnDisable()
         {
-            // 从 PolygonManager 反注册
-            if (PolygonManager.Instance != null)
+            // 优先从 PolygonManagerCore 反注册
+            if (PolygonManagerCore.Instance != null)
+            {
+                PolygonManagerCore.Instance.Unregister(this);
+            }
+            // 兼容旧的 PolygonManager
+            else if (PolygonManager.Instance != null)
             {
                 PolygonManager.Instance.Unregister(this);
             }

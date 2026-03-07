@@ -1,3 +1,6 @@
+#ifndef RCW_BVH_INC_HLSL
+#define RCW_BVH_INC_HLSL
+
 // bvh基础叶节点：一条边 (已废弃，保留用于参考)
 struct EdgeBVH
 {
@@ -468,6 +471,257 @@ float2 WorldToAtlasUV(in float2 worldPoint, in float4 uvMatrix, in float2 uvTran
 
 
 
+// =========================================================
+// 光照模型函数（便于统一修改为半兰伯特或其他 BRDF）
+// =========================================================
+
+/// <summary>
+/// 标准兰伯特光照
+/// </summary>
+/// <param name="normalWS">世界空间法线（归一化）</param>
+/// <param name="lightDirWS">从片元指向光源的方向（归一化）</param>
+/// <returns>光照强度 [0, 1]</returns>
+float LambertLighting(float3 normalWS, float3 lightDirWS)
+{
+    return saturate(dot(normalWS, lightDirWS));
+}
+
+/// <summary>
+/// 半兰伯特光照（可选，用于更柔和的阴影过渡）
+/// </summary>
+float HalfLambertLighting(float3 normalWS, float3 lightDirWS)
+{
+    float NdotL = dot(normalWS, lightDirWS);
+    return NdotL * 0.5 + 0.5;
+}
+
+/// <summary>
+/// 可配置的兰伯特光照
+/// mode: 0 = 标准兰伯特, 1 = 半兰伯特
+/// </summary>
+float ConfigurableLambert(float3 normalWS, float3 lightDirWS, int mode)
+{
+    if (mode == 1)
+        return HalfLambertLighting(normalWS, lightDirWS);
+    else
+        return LambertLighting(normalWS, lightDirWS);
+}
+
+// 当前使用的光照模式（可通过 Shader.SetGlobalInt 设置）
+// 0 = 标准兰伯特, 1 = 半兰伯特
+int _RCWB_LightingMode;
+
+/// <summary>
+/// 全局光照计算入口（使用全局配置的光照模式）
+/// </summary>
+float CalculateLighting(float3 normalWS, float3 lightDirWS)
+{
+    return ConfigurableLambert(normalWS, lightDirWS, _RCWB_LightingMode);
+}
+
+// =========================================================
+// BVH 阴影/遮挡计算
+// =========================================================
+
+/// <summary>
+/// 计算从片元到光源的阴影衰减（考虑半透明）
+/// </summary>
+/// <param name="worldPos">片元世界位置 (2D)</param>
+/// <param name="lightPos">光源世界位置 (2D)</param>
+/// <returns>阴影系数 [0, 1]，0 = 完全遮挡，1 = 无遮挡</returns>
+float CalculateShadowAttenuation(float2 worldPos, float2 lightPos)
+{
+    float2 toLight = lightPos - worldPos;
+    float distanceToLight = length(toLight);
+    
+    if (distanceToLight < 0.001)
+        return 1.0;
+    
+    // 构建从片元指向光源的射线
+    RayWS shadowRay;
+    shadowRay.Origin = worldPos;
+    shadowRay.Direction = normalize(toLight);
+    
+    // BVH 射线求交
+    IntersectsRaySegmentResultArray intersects;
+    if (!IntersectRayBVHArray(shadowRay, distanceToLight, intersects))
+    {
+        // 无遮挡
+        return 1.0;
+    }
+    
+    // 计算阴影衰减（考虑半透明材质）
+    float shadowAtten = 1.0;
+    
+    for (int i = 0; i < intersects.intersectsCount; i++)
+    {
+        IntersectsRaySegmentResult hit = intersects.results[i];
+        
+        // 检查命中点是否在光源和片元之间
+        float hitDist = distance(worldPos, hit.hitPoint);
+        if (hitDist > 0.01 && hitDist < distanceToLight - 0.01)
+        {
+            // 获取材质密度（用于半透明衰减）
+            // TODO: 未来可采样 atlas 获取颜色变化
+            MaterialData mat = _BVH_Material_Buffer[hit.matIdx];
+            float density = mat.Density;
+            
+            // density = 1.0 表示完全不透明
+            // density < 1.0 表示半透明，光线可部分穿透
+            shadowAtten *= (1.0 - density);
+            
+            // 完全遮挡时提前退出
+            if (shadowAtten < 0.001)
+                return 0.0;
+        }
+    }
+    
+    return shadowAtten;
+}
+
+/// <summary>
+/// 计算从物体内部片元到光源的阴影衰减（忽略自阴影，考虑介质透射）
+/// 专用于 sprite 内部像素的点光源计算
+/// 原理：
+///   1. 记录第一个出点的 material Index 作为"自身材质"
+///   2. 后续遇到相同材质的入点/出点时忽略（自阴影排除）
+///   3. 对于其他材质，使用入点-出点组成的介质区间计算透射率衰减
+/// </summary>
+/// <param name="worldPos">片元世界位置 (2D)，位于某个 sprite 内部</param>
+/// <param name="lightPos">光源世界位置 (2D)</param>
+/// <returns>阴影系数 [0, 1]，0 = 被其他物体完全遮挡，1 = 无遮挡</returns>
+float CalculateShadowAttenuationInterior(float2 worldPos, float2 lightPos)
+{
+    float2 toLight = lightPos - worldPos;
+    float distanceToLight = length(toLight);
+    
+    if (distanceToLight < 0.001)
+        return 1.0;
+    
+    // 构建从片元指向光源的射线
+    RayWS shadowRay;
+    shadowRay.Origin = worldPos;
+    shadowRay.Direction = normalize(toLight);
+    
+    // BVH 射线求交
+    IntersectsRaySegmentResultArray intersects;
+    if (!IntersectRayBVHArray(shadowRay, distanceToLight, intersects))
+    {
+        // 无碰撞（理论上不应该发生，因为我们在物体内部）
+        return 1.0;
+    }
+    
+    // 找到第一个出点的材质索引（自身材质）
+    // 出点 = dot(hitNormal, rayDir) > 0
+    int selfMatIdx = -1;
+    for (int k = 0; k < intersects.intersectsCount; k++)
+    {
+        IntersectsRaySegmentResult hit = intersects.results[k];
+        float hitDist = distance(worldPos, hit.hitPoint);
+        if (hitDist < 0.01 || hitDist > distanceToLight - 0.01)
+            continue;
+        
+        float normalDotDir = dot(hit.hitNormal, shadowRay.Direction);
+        if (normalDotDir > 0.0)
+        {
+            // 第一个出点就是自身边界
+            selfMatIdx = hit.matIdx;
+            break;
+        }
+    }
+    
+    // 构建介质区间并计算透射率
+    // 使用入点-出点配对的方式，类似 RayMarchingInterval
+    float shadowAtten = 1.0;
+    
+    // 追踪当前是否在某个介质内部，以及对应的入点信息
+    // 使用简化的栈结构：假设最多嵌套 8 层
+    #define MAX_MEDIUM_STACK 8
+    float2 entryPoints[MAX_MEDIUM_STACK];
+    int entryMatIdx[MAX_MEDIUM_STACK];
+    int stackDepth = 0;
+    
+    for (int i = 0; i < intersects.intersectsCount; i++)
+    {
+        IntersectsRaySegmentResult hit = intersects.results[i];
+        
+        // 检查命中点是否在有效范围内
+        float hitDist = distance(worldPos, hit.hitPoint);
+        if (hitDist < 0.01 || hitDist > distanceToLight - 0.01)
+            continue;
+        
+        // 如果是自身材质，跳过（自阴影排除）
+        if (hit.matIdx == selfMatIdx)
+            continue;
+        
+        // 判断是"出点"还是"入点"
+        float normalDotDir = dot(hit.hitNormal, shadowRay.Direction);
+        
+        if (normalDotDir < 0.0)
+        {
+            // 入点：进入某个介质
+            if (stackDepth < MAX_MEDIUM_STACK)
+            {
+                entryPoints[stackDepth] = hit.hitPoint;
+                entryMatIdx[stackDepth] = hit.matIdx;
+                stackDepth++;
+            }
+        }
+        else
+        {
+            // 出点：离开某个介质
+            // 查找对应的入点（相同材质）
+            for (int j = stackDepth - 1; j >= 0; j--)
+            {
+                if (entryMatIdx[j] == hit.matIdx)
+                {
+                    // 找到配对的入点，计算介质距离和透射率
+                    float2 entryPt = entryPoints[j];
+                    float2 exitPt = hit.hitPoint;
+                    float mediumDist = distance(entryPt, exitPt);
+                    
+                    MaterialData mat = _BVH_Material_Buffer[hit.matIdx];
+                    float segmentTransmittance = exp(-mediumDist * mat.Density);
+                    
+                    shadowAtten *= segmentTransmittance;
+                    
+                    // 从栈中移除这个入点（通过将后面的元素前移）
+                    for (int m = j; m < stackDepth - 1; m++)
+                    {
+                        entryPoints[m] = entryPoints[m + 1];
+                        entryMatIdx[m] = entryMatIdx[m + 1];
+                    }
+                    stackDepth--;
+                    break;
+                }
+            }
+        }
+        
+        // 完全遮挡时提前退出
+        if (shadowAtten < 0.001)
+            return 0.0;
+    }
+    
+    // 处理未配对的入点（介质延伸到光源）
+    for (int n = 0; n < stackDepth; n++)
+    {
+        float2 entryPt = entryPoints[n];
+        float mediumDist = distance(entryPt, lightPos);
+        
+        MaterialData mat = _BVH_Material_Buffer[entryMatIdx[n]];
+        float segmentTransmittance = exp(-mediumDist * mat.Density);
+        
+        shadowAtten *= segmentTransmittance;
+        
+        if (shadowAtten < 0.001)
+            return 0.0;
+    }
+    
+    #undef MAX_MEDIUM_STACK
+    
+    return shadowAtten;
+}
+
 // 摄像机矩阵
 float4x4 MatrixInvVP;
 float4x4 MatrixVP;
@@ -574,3 +828,5 @@ RcwbLightData GetRcwbLightData(float2 uv, float2 targetRenderSize, out bool isIn
 
     return data;
 }
+
+#endif

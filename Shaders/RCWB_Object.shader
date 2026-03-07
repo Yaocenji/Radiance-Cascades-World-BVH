@@ -45,6 +45,7 @@
 
             // RCWB库
             #include "RCW_BVH_Inc.hlsl"
+            #include "SpotLight2D_Inc.hlsl"
 
             // ---------------------------------------------------------
             // 1. CBUFFER 定义 (严格匹配 SRP Batcher)
@@ -120,29 +121,34 @@
                 half3 finalColor = albedo.rgb * IN.color;
 
                 // 世界空间
-                //float2 posWS = posPixel2World(IN.positionCS.xy, _ScreenParams.xy);
+                float2 posWS = posPixel2World(IN.positionCS.xy, _ScreenParams.xy);
                 // 屏幕空间uv
                 float2 screenUV = IN.positionCS.xy / _ScreenParams.xy;
 
-                bool isInsideSprite = false;
-
-                RcwbLightData light = GetRcwbLightData(screenUV,  _ScreenParams.xy, isInsideSprite);
-
-                if (isInsideSprite && length(_Emission.rgb) > 0.0001f)
-                {
-                    light.color = _Emission.rgb;
-                }
-
+                // 法线
                 half4 packednorm = SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, IN.uv);
                 half3 unpackednorm = UnpackNormal(packednorm);
                 unpackednorm = normalize(unpackednorm);
                 half3 normalWS = mul(half3x3(IN.tangentWS, IN.bitangentWS, IN.normalWS), unpackednorm);
 
-                half3 realDirection = normalize(half3(light.direction.xy, .3));
-                
-                half lambert = dot(normalWS, realDirection);
+                // RCWB GI
+                bool isInsideSprite = false;
+                RcwbLightData lightRCWBGI = GetRcwbLightData(screenUV,  _ScreenParams.xy, isInsideSprite);
 
-                half3 ansColor = albedo.xyz * light.color * lambert;
+                if (isInsideSprite && length(_Emission.rgb) > 0.0001f)
+                {
+                    lightRCWBGI.color = _Emission.rgb;
+                }
+                
+                // 使用统一的兰伯特函数计算 RCWB GI 光照
+                half3 realDirectionRCWBGI = normalize(half3(lightRCWBGI.direction.xy, 0.3));
+                half lambertRCWBGI = CalculateLighting(normalWS, realDirectionRCWBGI);
+
+                // SpotLight2D（带阴影和兰伯特）
+                // fragmentZ = 0 表示片元在 Z=0 平面上
+                float3 lightSpot = isInsideSprite ? CalculateAllSpotLights2D_Interior(posWS, normalWS) : CalculateAllSpotLights2D(posWS, normalWS, 0.0, true);
+
+                half3 ansColor = albedo.xyz * lightRCWBGI.color * lambertRCWBGI + albedo.xyz * lightSpot;
 
                 // debug:
                 // ansColor = _Emission.rgb;
