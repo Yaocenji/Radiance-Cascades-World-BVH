@@ -1,6 +1,13 @@
 #ifndef RCW_BVH_INC_HLSL
 #define RCW_BVH_INC_HLSL
 
+// =========================================================
+// 半透明物体宏开关
+// 启用时：使用 IntersectRayBVHArray 收集多个交点，计算介质距离-指数衰减
+// 禁用时：使用 IntersectRayBVH 只取最近交点，所有物体视为完全不透明
+// =========================================================
+//#define ENABLE_TRANSLUCENT_OBJECTS
+
 // bvh基础叶节点：一条边 (已废弃，保留用于参考)
 struct EdgeBVH
 {
@@ -253,7 +260,94 @@ bool IntersectRayBVH(RayWS ray, out IntersectsRaySegmentResult result)
     return hitFound;
 }
 
-#define MAX_INTERSECTS 8
+// =========================================================
+// 带最大距离限制的 BVH 射线求交（只返回最近交点）
+// 用于不透明物体模式下的简化阴影计算
+// =========================================================
+bool IntersectRayBVH(RayWS ray, float maxDistance, out IntersectsRaySegmentResult result)
+{
+    // 1. 初始化结果
+    result.hitPoint = float2(0, 0);
+    result.hitNormal = float2(0, 0);
+    result.nodeIndex = -1;
+    result.matIdx = -1;
+    
+    if (_BVH_Root_Index == -1)
+        return false;
+
+    // 2. 初始化遍历状态
+    float closestDist = maxDistance;
+    bool hitFound = false;
+
+    // 3. 准备栈 (模拟递归)
+    int nodeStack[MAX_RECUR_DEEP]; 
+    int stackTop = 0;
+    nodeStack[0] = _BVH_Root_Index;
+
+    // 预计算invDir
+    float2 dir = ray.Direction;
+    if (abs(dir.x) < 1e-9) dir.x = 1e-9 * (dir.x >= 0 ? 1.0 : -1.0);
+    if (abs(dir.y) < 1e-9) dir.y = 1e-9 * (dir.y >= 0 ? 1.0 : -1.0);
+    float2 invDir = 1.0f / dir;
+
+    // 4. 开始遍历 Loop
+    [loop]
+    while (stackTop >= 0)
+    {
+        int nodeIdx = nodeStack[stackTop];
+        stackTop--;
+
+        if (nodeIdx == -1) continue;
+
+        // 获取紧凑格式节点数据
+        LBVHNodeGpu node = _BVH_NodeEdge_Buffer[nodeIdx];
+
+        // 判断是否为叶子节点: IndexData < 0 表示叶子
+        bool isLeaf = (node.IndexData < 0);
+
+        if (isLeaf)
+        {
+            // === 叶子节点处理 ===
+            IntersectsRaySegmentResult tempResult;
+            int matIdx = ~node.IndexData;
+            
+            if (IntersectsRaySegment(ray, node, matIdx, tempResult))
+            {
+                float dist = distance(ray.Origin, tempResult.hitPoint);
+
+                // 只考虑在 maxDistance 范围内的交点
+                if (dist > 0.01 && dist < closestDist)
+                {
+                    closestDist = dist;
+                    result = tempResult;
+                    result.nodeIndex = nodeIdx;
+                    hitFound = true;
+                }
+            }
+        }
+        else
+        {
+            // === 内部节点处理 ===
+            if (!IntersectsRayAABB(ray, invDir, node))
+            {
+                continue;
+            }
+
+            // 将左右孩子压入栈中
+            if (stackTop < MAX_RECUR_DEEP - 2) 
+            {
+                stackTop++;
+                nodeStack[stackTop] = node.RightChild;
+                stackTop++;
+                nodeStack[stackTop] = node.IndexData;   // LeftChild
+            }
+        }
+    }
+
+    return hitFound;
+}
+
+#define MAX_INTERSECTS 3
 struct IntersectsRaySegmentResultArray
 {
     int intersectsCount;
@@ -524,8 +618,9 @@ float CalculateLighting(float3 normalWS, float3 lightDirWS)
 // =========================================================
 
 /// <summary>
-/// 计算从片元到光源的阴影衰减（考虑介质距离和密度的指数衰减）
-/// 使用 GetIntervals 构建介质区间，计算 exp(-distance * density) 透射率
+/// 计算从片元到光源的阴影衰减
+/// 启用半透明时：使用 GetIntervals 构建介质区间，计算 exp(-distance * density) 透射率
+/// 禁用半透明时：只检查是否有任何遮挡，有则返回 0
 /// </summary>
 /// <param name="worldPos">片元世界位置 (2D)</param>
 /// <param name="lightPos">光源世界位置 (2D)</param>
@@ -543,7 +638,10 @@ float CalculateShadowAttenuation(float2 worldPos, float2 lightPos)
     shadowRay.Origin = worldPos;
     shadowRay.Direction = normalize(toLight);
     
-    // BVH 射线求交
+#ifdef ENABLE_TRANSLUCENT_OBJECTS
+    // === 半透明模式：收集多个交点，计算介质透射率 ===
+    
+    // BVH 射线求交（收集所有交点）
     IntersectsRaySegmentResultArray intersects;
     if (!IntersectRayBVHArray(shadowRay, distanceToLight, intersects))
     {
@@ -578,15 +676,28 @@ float CalculateShadowAttenuation(float2 worldPos, float2 lightPos)
     }
     
     return shadowAtten;
+    
+#else
+    // === 不透明模式：只检查最近交点，有遮挡则完全阻挡 ===
+    
+    IntersectsRaySegmentResult hit;
+    if (IntersectRayBVH(shadowRay, distanceToLight, hit))
+    {
+        // 有遮挡物，完全阻挡
+        return 0.0;
+    }
+    
+    // 无遮挡
+    return 1.0;
+    
+#endif
 }
 
 /// <summary>
-/// 计算从物体内部片元到光源的阴影衰减（忽略自阴影，考虑介质透射）
+/// 计算从物体内部片元到光源的阴影衰减（忽略自阴影）
 /// 专用于 sprite 内部像素的点光源计算
-/// 原理：
-///   1. 记录第一个出点的 material Index 作为"自身材质"
-///   2. 后续遇到相同材质的入点/出点时忽略（自阴影排除）
-///   3. 对于其他材质，使用入点-出点组成的介质区间计算透射率衰减
+/// 启用半透明时：记录自身材质并排除，对其他材质计算介质透射率
+/// 禁用半透明时：忽略第一个出点（自身边界），检查是否有其他入点遮挡
 /// </summary>
 /// <param name="worldPos">片元世界位置 (2D)，位于某个 sprite 内部</param>
 /// <param name="lightPos">光源世界位置 (2D)</param>
@@ -603,6 +714,9 @@ float CalculateShadowAttenuationInterior(float2 worldPos, float2 lightPos)
     RayWS shadowRay;
     shadowRay.Origin = worldPos;
     shadowRay.Direction = normalize(toLight);
+    
+#ifdef ENABLE_TRANSLUCENT_OBJECTS
+    // === 半透明模式：收集多个交点，计算介质透射率，排除自身材质 ===
     
     // BVH 射线求交
     IntersectsRaySegmentResultArray intersects;
@@ -721,6 +835,47 @@ float CalculateShadowAttenuationInterior(float2 worldPos, float2 lightPos)
     #undef MAX_MEDIUM_STACK
     
     return shadowAtten;
+    
+#else
+    // === 不透明模式：忽略第一个出点（自身边界），检查是否有其他入点遮挡 ===
+    
+    // 使用单次求交函数
+    IntersectsRaySegmentResult hit;
+    if (!IntersectRayBVH(shadowRay, distanceToLight, hit))
+    {
+        // 无碰撞
+        return 1.0;
+    }
+    
+    // 检查是否为出点（自身边界）
+    float normalDotDir = dot(hit.hitNormal, shadowRay.Direction);
+    if (normalDotDir > 0.0)
+    {
+        // 第一个碰撞是出点（自身边界），需要继续检查后续是否有遮挡
+        // 从出点位置继续发射射线
+        RayWS continueRay;
+        continueRay.Origin = hit.hitPoint + shadowRay.Direction * 0.02; // 略微偏移避免重复碰撞
+        continueRay.Direction = shadowRay.Direction;
+        
+        float remainingDist = distanceToLight - distance(worldPos, hit.hitPoint) - 0.02;
+        
+        IntersectsRaySegmentResult nextHit;
+        if (remainingDist > 0.01 && IntersectRayBVH(continueRay, remainingDist, nextHit))
+        {
+            // 后续有遮挡
+            return 0.0;
+        }
+        
+        // 无后续遮挡
+        return 1.0;
+    }
+    else
+    {
+        // 第一个碰撞是入点（其他物体的遮挡）
+        return 0.0;
+    }
+    
+#endif
 }
 
 // 摄像机矩阵

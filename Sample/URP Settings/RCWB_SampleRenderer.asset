@@ -16,7 +16,7 @@ MonoBehaviour:
   rcShader: {fileID: 7200000, guid: cdc61e057e943ef489e0982686b62e09, type: 3}
   settings:
     renderScale: 0.125
-    cascadeCount: 6
+    cascadeCount: 5
     rayRange: 35
     bounceIntensity: 0
     skyColor: {r: 0, g: 0, b: 0, a: 0}

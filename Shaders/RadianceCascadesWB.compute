@@ -105,12 +105,17 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
         RayWS ray;
         ray.Origin = realOriginWS;
         ray.Direction = rayDirectionWS;
-        IntersectsRaySegmentResultArray results;
         float maxLightLength = rayRange.y - rayRange.x;
-        bool intRayBVH = IntersectRayBVHArray(ray, maxLightLength, results);
-
+        
         // 通过求交结果采样颜色
         min16float4 radiance;
+        
+#ifdef ENABLE_TRANSLUCENT_OBJECTS
+        // === 半透明模式：收集多个交点，计算介质透射率 ===
+        
+        IntersectsRaySegmentResultArray results;
+        bool intRayBVH = IntersectRayBVHArray(ray, maxLightLength, results);
+        
         if (intRayBVH && _RCWB_CascadeLevel != 0)
         {
 
@@ -158,6 +163,32 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
         }
         else
             radiance = float4(0, 0, 0, 1);
+            
+#else
+        // === 不透明模式：只取最近交点，所有物体视为完全不透明 ===
+        
+        IntersectsRaySegmentResult hitResult;
+        bool intRayBVH = IntersectRayBVH(ray, maxLightLength, hitResult);
+        
+        if (intRayBVH && _RCWB_CascadeLevel != 0)
+        {
+            // 获取命中点的材质
+            MaterialData hitMat = _BVH_Material_Buffer[hitResult.matIdx];
+            
+            // 采样 atlas 获取颜色
+            float2 atlasUV = WorldToAtlasUV(hitResult.hitPoint, hitMat.uvMatrix, hitMat.uvTranslation);
+            float3 sampleColor = SAMPLE_TEXTURE2D_LOD(_RCWB_Atlas, sampler_RCWB_Atlas, atlasUV, 0);
+            
+            // 直接使用发光颜色，不透明物体完全阻挡后续光线
+            float3 emittedLight = sampleColor * hitMat.Emission.rgb;
+            
+            // 不透明模式下，透射率为 0（完全阻挡）
+            radiance = float4(emittedLight, 0.0);
+        }
+        else
+            radiance = float4(0, 0, 0, 1);
+            
+#endif
 
         
         // 如果不是第一，那么  cascade merge

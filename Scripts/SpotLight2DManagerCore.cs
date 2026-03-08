@@ -226,24 +226,30 @@ namespace RadianceCascadesWorldBVH
             // 设置光源数量（即使为 0 也要设置）
             Shader.SetGlobalInt(SpotLightCountID, count);
             
-            if (count == 0)
+            // 确保 buffer 始终存在并绑定，即使没有光源
+            // 这避免了着色器读取未定义 buffer 的问题
+            if (spotLightBuffer == null)
             {
-                return;
+                int stride = Marshal.SizeOf<SpotLight2DGpu>();
+                spotLightBuffer = new ComputeBuffer(16, stride);
             }
             
-            // 管理缓冲区大小
-            if (spotLightBuffer == null || spotLightBuffer.count < count)
+            // 如果需要扩容
+            if (count > 0 && spotLightBuffer.count < count)
             {
-                spotLightBuffer?.Release();
+                spotLightBuffer.Release();
                 int newSize = Mathf.Max(16, Mathf.NextPowerOfTwo(count));
                 int stride = Marshal.SizeOf<SpotLight2DGpu>();
                 spotLightBuffer = new ComputeBuffer(newSize, stride);
             }
             
-            // 上传数据
-            spotLightBuffer.SetData(gpuData.ToArray(), 0, 0, count);
+            // 上传数据（如果有）
+            if (count > 0)
+            {
+                spotLightBuffer.SetData(gpuData.ToArray(), 0, 0, count);
+            }
             
-            // 绑定到全局 Shader
+            // 始终绑定到全局 Shader（即使没有光源）
             Shader.SetGlobalBuffer(SpotLightBufferID, spotLightBuffer);
         }
         
