@@ -35,7 +35,6 @@ float2 CalculateRayRange(uint index, uint count)
     return r * _RCWB_RayRange_WS;
 }
 
-//#define STEP_HALF_OPTIMIZATION
 //#define ALLOW_POLYGON_OVERLAP
 
 RWTexture2D <float4> Result;
@@ -61,17 +60,6 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
     uint2 block2DIndex = floor(id.xy / blockDim);
     // 这一层的块的flatten索引
     float blockFlattenIndex = block2DIndex.x + block2DIndex.y * blockSqrtCount;
-
-#ifdef STEP_HALF_OPTIMIZATION
-    // 总索引数，根据每层探针数/4，角度数*2为例
-    uint blockFlattenIndexMax = blockSqrtCount * blockSqrtCount / (1 << _RCWB_CascadeLevel);
-    // 如果超出的，那么就截掉
-    if (blockFlattenIndex >= blockFlattenIndexMax)
-    {
-        Result[id.xy] = float4(0, 0, 0, 1);
-        return;
-    }
-#endif
     
     // 这一层的块内像素坐标
     float2 pixelPosInBlock = fmod(id.xy, blockDim);
@@ -96,23 +84,14 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
     // 角度分辨率，每个block对应一个角度
     float angleStep = 0;
     int loopNum = 0;
-#ifdef STEP_HALF_OPTIMIZATION
-    angleStep = TWO_PI / (blockFlattenIndexMax * 2);
-    loopNum = 2;
-#else
     loopNum = 4;
     angleStep = TWO_PI / (blockSqrtCount * blockSqrtCount * 4);
-#endif
     
     for (int i = 0; i < 4; ++i)
     {
         // 当前循环对应的角度索引
         float angleIndex = 0;
-#ifdef STEP_HALF_OPTIMIZATION
-        angleIndex = blockFlattenIndex * 2 + i;
-#else
         angleIndex = blockFlattenIndex * 4 + i;
-#endif
         // 当前线程对应的角度
         float currAngle = angleStep * (angleIndex + .5);
         
@@ -256,7 +235,6 @@ SAMPLER(sampler_RCWB_OneDirResult);
 
 [numthreads(8,8,1)]
 void DirectionMain (uint3 id : SV_DispatchThreadID){
-#ifndef STEP_HALF_OPTIMIZATION
 
     // 先剔除越界线程（实际RC算法调度的线程数应该恰好整除16，不会有越界线程）
     if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
@@ -314,7 +292,6 @@ void DirectionMain (uint3 id : SV_DispatchThreadID){
         Direction[id.xy] = ansDir;
     }
 
-#endif
 }
 
 
