@@ -36,6 +36,7 @@ float2 CalculateRayRange(uint index, uint count)
 }
 
 //#define STEP_HALF_OPTIMIZATION
+//#define ALLOW_POLYGON_OVERLAP
 
 RWTexture2D <float4> Result;
 
@@ -81,16 +82,6 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
     // 计算屏幕中心点的世界空间坐标
     float2 centerPosWS = posPixel2World((float2)_RCWB_CascadeResolution / 2.0f, (float2)_RCWB_CascadeResolution);
     float2 center2currDir = normalize(posWS - centerPosWS);
-
-    // 测试射线与BVH求交
-    /*RayWS rayTest;
-    rayTest.Origin = centerPosWS;
-    rayTest.Direction = center2currDir;
-    IntersectsRaySegmentResult result1;
-    bool intTest1 = IntersectRayBVH(rayTest, result1);
-    IntersectsRaySegmentResultArray result2;
-    bool intTest2 = IntersectRayBVHArray(rayTest, length(centerPosWS - posWS), result2);*/
-
     
     // 射线跨越距离
     float2 rayRange = CalculateRayRange(_RCWB_CascadeLevel, _RCWB_CascadeCount);
@@ -143,6 +134,17 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
         min16float4 radiance;
         if (intRayBVH && _RCWB_CascadeLevel != 0)
         {
+
+            #ifdef ALLOW_POLYGON_OVERLAP
+
+            // 初始情况下，介质为白色；
+            half3 currentMediumColor = half3(1, 1, 1);
+            // 当前介质密度，初始为0；
+            half currentDensity = 0;
+            // 初始判定，如果当前的介质为0
+
+            #else
+            
             // 步进区间
             RayMarchingInterval intervals[MAX_RAYMARCHING_INTERVALS];
 
@@ -168,23 +170,12 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
                 
                 defaultAnsRadiance.xyz += segmentLight;
                 defaultAnsRadiance.w *= segmentTransmittance;
-                if (defaultAnsRadiance.w < 0.001) break; 
+                if (defaultAnsRadiance.w < 0.001) break;
+                
             }
             radiance = defaultAnsRadiance;
             
-            /*if (intRayBVHInterior)
-            {
-                float segmentTransmittance = exp(-length(resultInterior.hitPoint - result.hitPoint));
-                float3 segmentLight = mat.Emission.rgb * (1.0 - segmentTransmittance);
-                radiance = float4(segmentLight, 1 - segmentTransmittance);
-            }
-            else
-            {
-                radiance = float4(0, 0, 0, 0);
-            }*/
-            
-            //radiance = float4(mat.Emission.xyz, 0);
-            //radiance = float4(edge.matIdx.xxx, 0);
+            #endif
         }
         else
             radiance = float4(0, 0, 0, 1);

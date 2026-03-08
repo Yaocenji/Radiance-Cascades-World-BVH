@@ -15,7 +15,7 @@ MonoBehaviour:
   m_Active: 1
   rcShader: {fileID: 7200000, guid: cdc61e057e943ef489e0982686b62e09, type: 3}
   settings:
-    renderScale: 0.25
+    renderScale: 0.125
     cascadeCount: 6
     rayRange: 35
     bounceIntensity: 0
@@ -25,8 +25,8 @@ MonoBehaviour:
     sunAngle: 0
     sunIntensity: 0
     sunHardness: 0
-    blurIterations: 2
-    blurRadius: 2.5
+    blurIterations: 1
+    blurRadius: 1
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0

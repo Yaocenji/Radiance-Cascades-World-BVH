@@ -253,7 +253,7 @@ bool IntersectRayBVH(RayWS ray, out IntersectsRaySegmentResult result)
     return hitFound;
 }
 
-#define MAX_INTERSECTS 4
+#define MAX_INTERSECTS 8
 struct IntersectsRaySegmentResultArray
 {
     int intersectsCount;
@@ -524,7 +524,8 @@ float CalculateLighting(float3 normalWS, float3 lightDirWS)
 // =========================================================
 
 /// <summary>
-/// 计算从片元到光源的阴影衰减（考虑半透明）
+/// 计算从片元到光源的阴影衰减（考虑介质距离和密度的指数衰减）
+/// 使用 GetIntervals 构建介质区间，计算 exp(-distance * density) 透射率
 /// </summary>
 /// <param name="worldPos">片元世界位置 (2D)</param>
 /// <param name="lightPos">光源世界位置 (2D)</param>
@@ -550,30 +551,30 @@ float CalculateShadowAttenuation(float2 worldPos, float2 lightPos)
         return 1.0;
     }
     
-    // 计算阴影衰减（考虑半透明材质）
+    // 使用 GetIntervals 构建介质区间
+    RayMarchingInterval intervals[MAX_RAYMARCHING_INTERVALS];
+    int intervalCount = 0;
+    GetIntervals(shadowRay, intersects, distanceToLight, intervals, intervalCount);
+    
+    // 计算阴影衰减（基于介质距离和密度的指数衰减）
     float shadowAtten = 1.0;
     
-    for (int i = 0; i < intersects.intersectsCount; i++)
+    for (int i = 0; i < intervalCount; i++)
     {
-        IntersectsRaySegmentResult hit = intersects.results[i];
+        RayMarchingInterval interval = intervals[i];
+        MaterialData mat = _BVH_Material_Buffer[interval.matIdx];
         
-        // 检查命中点是否在光源和片元之间
-        float hitDist = distance(worldPos, hit.hitPoint);
-        if (hitDist > 0.01 && hitDist < distanceToLight - 0.01)
-        {
-            // 获取材质密度（用于半透明衰减）
-            // TODO: 未来可采样 atlas 获取颜色变化
-            MaterialData mat = _BVH_Material_Buffer[hit.matIdx];
-            float density = mat.Density;
-            
-            // density = 1.0 表示完全不透明
-            // density < 1.0 表示半透明，光线可部分穿透
-            shadowAtten *= (1.0 - density);
-            
-            // 完全遮挡时提前退出
-            if (shadowAtten < 0.001)
-                return 0.0;
-        }
+        // 计算介质区间距离
+        float mediumDist = length(interval.end - interval.start);
+        
+        // 指数衰减：透射率 = exp(-distance * density)
+        float segmentTransmittance = exp(-mediumDist * mat.Density);
+        
+        shadowAtten *= segmentTransmittance;
+        
+        // 完全遮挡时提前退出
+        if (shadowAtten < 0.001)
+            return 0.0;
     }
     
     return shadowAtten;

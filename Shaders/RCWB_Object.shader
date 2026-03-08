@@ -152,6 +152,7 @@
 
                 // debug:
                 // ansColor = _Emission.rgb;
+                // ansColor = isInsideSprite;
                 
                 return half4(ansColor, albedo.a * IN.color.a);
             }
