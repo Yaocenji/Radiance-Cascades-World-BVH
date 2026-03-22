@@ -21,6 +21,12 @@ uint _RCWB_CascadeLevel;
 uint _RCWB_CascadeCount;
 // 射线最长的距离（世界空间的）
 float _RCWB_RayRange_WS;
+float3 _RCWB_SkyColor;
+float _RCWB_SkyIntensity;
+float3 _RCWB_SunColor;
+float _RCWB_SunAngle;
+float _RCWB_SunIntensity;
+float _RCWB_SunHardness;
 
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 #include "RCW_BVH_Inc.hlsl"
@@ -210,6 +216,13 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
             // 
             radiance.rgb += rad.rgb * radiance.a;
             radiance.a *= rad.a;
+        }
+        else
+        {
+            float3 sky = _RCWB_SkyColor * _RCWB_SkyIntensity;
+            float2 sunDir = float2(cos(_RCWB_SunAngle), sin(_RCWB_SunAngle));
+            float3 sun = _RCWB_SunColor * _RCWB_SunIntensity * pow(clamp(dot(rayDirectionWS, sunDir), 0, 1), _RCWB_SunHardness);
+            radiance.rgb += (sky + sun) * radiance.a;
         }
 
         finalResults += radiance * (1.0f / loopNum);

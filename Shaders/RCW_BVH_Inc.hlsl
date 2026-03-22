@@ -603,7 +603,7 @@ float ConfigurableLambert(float3 normalWS, float3 lightDirWS, int mode)
 
 // 当前使用的光照模式（可通过 Shader.SetGlobalInt 设置）
 // 0 = 标准兰伯特, 1 = 半兰伯特
-int _RCWB_LightingMode;
+int _RCWB_LightingMode = 1;
 
 /// <summary>
 /// 全局光照计算入口（使用全局配置的光照模式）
@@ -968,6 +968,13 @@ RcwbLightData GetRcwbLightData(float2 uv, float2 targetRenderSize, out bool isIn
     {
         data.color = SAMPLE_TEXTURE2D(_RCWB_LightResult, sampler_RCWB_LightResult, uv).rgb;
         data.direction = SAMPLE_TEXTURE2D(_RCWB_DirectionResult, sampler_RCWB_DirectionResult, uv);
+        // 一个fallback：如果方向非常小（旋度极大点），那么采用模糊后的方向
+        if (length(data.direction) <= .001)
+        {
+            //data.direction = SAMPLE_TEXTURE2D(_RCWB_DirectionResult_Blur, sampler_RCWB_DirectionResult_Blur, uv);
+            //data.direction = 0;
+        }
+
     }
     else
     {

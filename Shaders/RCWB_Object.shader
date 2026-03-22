@@ -144,9 +144,17 @@
                     lightRCWBGI.color = _Emission.rgb;
                 }
                 
+                // 计算安全统一规范化向量
+                float directionLength = length(lightRCWBGI.direction.xy);
+                float2 realDirection2D = directionLength > .0001 ? normalize(lightRCWBGI.direction.xy) : 0;
+
                 // 使用统一的兰伯特函数计算 RCWB GI 光照
-                half3 realDirectionRCWBGI = normalize(half3(lightRCWBGI.direction.xy, 0.3));
+                half3 realDirectionRCWBGI = normalize(half3(normalize(lightRCWBGI.direction.xy), .1));
                 half lambertRCWBGI = CalculateLighting(normalWS, realDirectionRCWBGI);
+
+                // 物体内部的光，为了过渡平滑，需要乘上这个
+                lambertRCWBGI *= isInsideSprite ? clamp(directionLength, 0, 1) : 1;
+
 
                 // SpotLight2D（带阴影和兰伯特）
                 // fragmentZ = 0 表示片元在 Z=0 平面上
@@ -157,6 +165,7 @@
                 // debug:
                 // ansColor = _Emission.rgb;
                 // ansColor = isInsideSprite;
+                //return length(lightRCWBGI.direction) / 2.0f;
                 
                 return half4(ansColor, albedo.a * IN.color.a);
             }

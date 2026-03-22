@@ -15,17 +15,17 @@ MonoBehaviour:
   m_Active: 1
   rcShader: {fileID: 7200000, guid: cdc61e057e943ef489e0982686b62e09, type: 3}
   settings:
-    renderScale: 0.125
+    renderScale: 0.25
     cascadeCount: 5
     rayRange: 35
     bounceIntensity: 0
-    skyColor: {r: 0, g: 0, b: 0, a: 0}
-    skyIntensity: 0
-    sunColor: {r: 0, g: 0, b: 0, a: 0}
-    sunAngle: 0
-    sunIntensity: 0
-    sunHardness: 0
-    blurIterations: 1
+    skyColor: {r: 0.62578607, g: 0.8124066, b: 1, a: 1}
+    skyIntensity: 1
+    sunColor: {r: 1, g: 0.71370053, b: 0, a: 1}
+    sunAngle: -5.47
+    sunIntensity: 20.68
+    sunHardness: 2
+    blurIterations: 2
     blurRadius: 1
     enableTranslucentObjects: 1
 --- !u!114 &11400000

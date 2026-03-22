@@ -200,6 +200,12 @@ namespace RadianceCascadesWorldBVH
                 
                 // 射线范围
                 cmd.SetComputeFloatParam(rcShader, "_RCWB_RayRange_WS", settings.rayRange);
+                cmd.SetComputeVectorParam(rcShader, "_RCWB_SkyColor", settings.skyColor);
+                cmd.SetComputeFloatParam(rcShader, "_RCWB_SkyIntensity", settings.skyIntensity);
+                cmd.SetComputeVectorParam(rcShader, "_RCWB_SunColor", settings.sunColor);
+                cmd.SetComputeFloatParam(rcShader, "_RCWB_SunAngle", settings.sunAngle);
+                cmd.SetComputeFloatParam(rcShader, "_RCWB_SunIntensity", settings.sunIntensity);
+                cmd.SetComputeFloatParam(rcShader, "_RCWB_SunHardness", settings.sunHardness);
 
                 for (int i = 0; i < settings.cascadeCount; i++)
                 {
