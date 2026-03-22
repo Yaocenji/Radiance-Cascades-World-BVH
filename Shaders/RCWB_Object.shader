@@ -39,6 +39,7 @@
             HLSLPROGRAM
             #pragma vertex Vert
             #pragma fragment Frag
+            #pragma multi_compile_fragment _ RCWB_EDITOR_SCENE_PREVIEW
             
             // 引入 URP 核心库
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
@@ -117,8 +118,10 @@
             half4 Frag(Varyings IN) : SV_Target
             {
                 half4 albedo = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, IN.uv);
-                
-                half3 finalColor = albedo.rgb * IN.color;
+
+                #if defined(RCWB_EDITOR_SCENE_PREVIEW)
+                return half4(albedo.rgb * IN.color.rgb, albedo.a * IN.color.a);
+                #endif
 
                 // 世界空间
                 float2 posWS = posPixel2World(IN.positionCS.xy, _ScreenParams.xy);
