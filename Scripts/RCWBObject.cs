@@ -42,6 +42,8 @@ namespace RadianceCascadesWorldBVH
                 spriteRenderer = GetComponent<SpriteRenderer>();
             
             // 优先向 PolygonManagerCore 注册（PlayerLoop 驱动，无需场景挂载）
+            PolygonManagerCore.EnsureInitialized();
+            
             if (PolygonManagerCore.Instance != null)
             {
                 PolygonManagerCore.Instance.Register(this, spriteRenderer);

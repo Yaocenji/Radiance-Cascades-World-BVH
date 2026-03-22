@@ -46,10 +46,18 @@ namespace RadianceCascadesWorldBVH
 
         #region 静态初始化
         
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStatics()
+        {
+            Instance = null;
+            s_Initialized = false;
+        }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void AutoInitialize()
         {
-            if (s_Initialized) return;
+            EnsureInitialized();
+            return;
             
             Instance = new PolygonManagerCore();
             Instance.Initialize();
@@ -65,6 +73,25 @@ namespace RadianceCascadesWorldBVH
             Debug.Log("[PolygonManagerCore] 已自动初始化并注入 PlayerLoop");
         }
         
+        public static void EnsureInitialized()
+        {
+            if (s_Initialized && Instance != null) return;
+            
+            Instance = new PolygonManagerCore();
+            Instance.Initialize();
+            
+            // 娉ㄥ叆鍒?PlayerLoop
+            InjectPlayerLoopUpdate();
+            
+            // 璁㈤槄搴旂敤閫€鍑轰簨浠?
+            Application.quitting -= OnApplicationQuit;
+            Application.quitting += OnApplicationQuit;
+            
+            s_Initialized = true;
+            
+            Debug.Log("[PolygonManagerCore] 宸茶嚜鍔ㄥ垵濮嬪寲骞舵敞鍏?PlayerLoop");
+        }
+
         private static void InjectPlayerLoopUpdate()
         {
             var playerLoop = PlayerLoop.GetCurrentPlayerLoop();

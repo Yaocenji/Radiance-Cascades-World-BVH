@@ -7,6 +7,7 @@
 
 #pragma kernel InvasionLightMain
 #pragma kernel InvasionDirectionMain
+#pragma multi_compile _ ENABLE_TRANSLUCENT_OBJECTS
 
 // 满分辨率
 uint2 _CameraResolution_Full;

@@ -27,6 +27,10 @@ namespace RadianceCascadesWorldBVH
         public int blurIterations = 4;      // 控制降采样的深度，4 是个非常好的默认值
         public float blurRadius = 1.0f;     // 散布半径
 
+        [Header("Shading Options")]
+        [Tooltip("Enable translucent-object branch in shader space (keyword: ENABLE_TRANSLUCENT_OBJECTS).")]
+        public bool enableTranslucentObjects = false;
+
         public RcwbSettings(
             float renderScale,
             int cascadeCount,
@@ -54,6 +58,7 @@ namespace RadianceCascadesWorldBVH
     
     public class RadianceCascadesWBFeature : ScriptableRendererFeature
     {
+        private const string TranslucentObjectsKeyword = "ENABLE_TRANSLUCENT_OBJECTS";
         public ComputeShader rcShader;
         public RcwbSettings settings;
         
@@ -163,6 +168,14 @@ namespace RadianceCascadesWorldBVH
             {
                 // 写个名字
                 CommandBuffer cmd = CommandBufferPool.Get("Radiance Cascades");
+                if (settings != null && settings.enableTranslucentObjects)
+                {
+                    cmd.EnableShaderKeyword(TranslucentObjectsKeyword);
+                }
+                else
+                {
+                    cmd.DisableShaderKeyword(TranslucentObjectsKeyword);
+                }
                 
                 cmd.BeginSample("Radiance Cascades WB");
                 
@@ -356,11 +369,13 @@ namespace RadianceCascadesWorldBVH
             m_ScriptablePass = new RcwbRenderPass(settings, rcShader);
 
             m_ScriptablePass.renderPassEvent = RenderPassEvent.BeforeRenderingOpaques;
+            ApplyShaderKeywords();
         }
 
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
             // 判定当前渲染窗口是哪个
+            ApplyShaderKeywords();
             var cameraType = renderingData.cameraData.cameraType;
             if (cameraType == CameraType.Preview || cameraType == CameraType.Reflection || cameraType == CameraType.SceneView)
             {
@@ -369,6 +384,18 @@ namespace RadianceCascadesWorldBVH
             
             // 只有game窗口会应用renderPass
             renderer.EnqueuePass(m_ScriptablePass);
+        }
+
+        private void ApplyShaderKeywords()
+        {
+            if (settings != null && settings.enableTranslucentObjects)
+            {
+                Shader.EnableKeyword(TranslucentObjectsKeyword);
+            }
+            else
+            {
+                Shader.DisableKeyword(TranslucentObjectsKeyword);
+            }
         }
     }
         

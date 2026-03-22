@@ -27,6 +27,7 @@ MonoBehaviour:
     sunHardness: 0
     blurIterations: 1
     blurRadius: 1
+    enableTranslucentObjects: 1
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0

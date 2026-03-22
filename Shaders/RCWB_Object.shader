@@ -40,6 +40,7 @@
             #pragma vertex Vert
             #pragma fragment Frag
             #pragma multi_compile_fragment _ RCWB_EDITOR_SCENE_PREVIEW
+            #pragma multi_compile_fragment _ ENABLE_TRANSLUCENT_OBJECTS
             
             // 引入 URP 核心库
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
