@@ -5,6 +5,9 @@ namespace RadianceCascadesWorldBVH
 {
     public class RCWBObject : MonoBehaviour
     {
+        [Tooltip("是否作为墙体参与 Polygon BVH 构建")]
+        public bool IsWall = true;
+
         public Color BasicColor;       // 基础颜色
         
         public float Density;       // 物质密度
@@ -26,6 +29,7 @@ namespace RadianceCascadesWorldBVH
         private MaterialPropertyBlock mpb;
         private static readonly int RotationSinCosID = Shader.PropertyToID("_RotationSinCos");
         private static readonly int EmissionID = Shader.PropertyToID("_Emission");
+        private static readonly int GICoefficientID = Shader.PropertyToID("_GICoefficient");
         
         public Vector4 UVMatrix => uvMatrix;
         public Vector2 UVTranslation => uvTranslation;
@@ -41,9 +45,12 @@ namespace RadianceCascadesWorldBVH
             if (spriteRenderer == null)
                 spriteRenderer = GetComponent<SpriteRenderer>();
             
+            // 非墙体不参与 Polygon BVH 构建
+            if (!IsWall) return;
+
             // 优先向 PolygonManagerCore 注册（PlayerLoop 驱动，无需场景挂载）
             PolygonManagerCore.EnsureInitialized();
-            
+
             if (PolygonManagerCore.Instance != null)
             {
                 PolygonManagerCore.Instance.Register(this, spriteRenderer);
@@ -92,6 +99,9 @@ namespace RadianceCascadesWorldBVH
 
             // 设置自发光属性
             mpb.SetColor(EmissionID, Emission);
+
+            // 设置gi系数
+            mpb.SetFloat(GICoefficientID, giCoefficient);
             
             // 应用回 SpriteRenderer
             spriteRenderer.SetPropertyBlock(mpb);

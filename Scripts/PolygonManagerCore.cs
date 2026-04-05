@@ -190,7 +190,7 @@ namespace RadianceCascadesWorldBVH
             RCWBObject[] existingObjects = UnityEngine.Object.FindObjectsByType<RCWBObject>(FindObjectsSortMode.None);
             foreach (var obj in existingObjects)
             {
-                if (obj.isActiveAndEnabled)
+                if (obj.isActiveAndEnabled && obj.IsWall)
                 {
                     SpriteRenderer sr = obj.GetComponent<SpriteRenderer>();
                     if (sr != null)

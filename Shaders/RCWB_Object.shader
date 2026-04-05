@@ -55,6 +55,7 @@
                 float4 _BumpMap_ST;
                 half4 _Emission;
                 float2 _RotationSinCos; // x=cos, y=sin
+                float _GICoefficient;
 
                 // 摄像机矩阵
                 float4x4 MatrixInvVP;
@@ -189,7 +190,7 @@
                 // 全局光
                 float3 globalLight = .0;
                 
-                half3 ansColor = IN.color.xyz * albedo.xyz * (lightRCWBGI.color * lambertRCWBGI + lightSpot + globalLight);
+                half3 ansColor = IN.color.xyz * albedo.xyz * (_GICoefficient * lightRCWBGI.color * lambertRCWBGI + lightSpot + globalLight);
 
                 // 和上一帧混合
                 // half3 historyColor = SAMPLE_TEXTURE2D(_RCWB_HistoryColor, sampler_RCWB_HistoryColor, screenUV_prev).rgb;
