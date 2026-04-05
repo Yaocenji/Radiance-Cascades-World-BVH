@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using UnityEngine.Tilemaps;
 
 namespace RadianceCascadesWorldBVH
 {
@@ -9,42 +10,86 @@ namespace RadianceCascadesWorldBVH
         public bool IsWall = true;
 
         public Color BasicColor;       // 基础颜色
-        
+
         public float Density;       // 物质密度
-        
-        [ColorUsage(false, true)] 
+
+        [ColorUsage(false, true)]
         public Color Emission;
-        
+
         [Range(0.0f, 10.0f)]
         [Tooltip("GI系数 (控制全局光照强度，默认1.0)")]
         public float giCoefficient = 1.0f;
-        
+
         private int TextureIndex;   // 如果你有多张图集，这里标记用哪张，单张图集可忽略
-        
+
         private Vector4 uvMatrix;       // 2x2线性变换矩阵，存储为(m00, m01, m10, m11)
         private Vector2 uvTranslation;  // 平移向量
-        
+
         private SpriteRenderer spriteRenderer;
-        
+        private Renderer activeRenderer;        // 通用渲染器引用（SpriteRenderer 或 TilemapRenderer）
+        private bool isTile;                    // 是否为 Tilemap 类型
+
         private MaterialPropertyBlock mpb;
         private static readonly int RotationSinCosID = Shader.PropertyToID("_RotationSinCos");
         private static readonly int EmissionID = Shader.PropertyToID("_Emission");
         private static readonly int GICoefficientID = Shader.PropertyToID("_GICoefficient");
-        
+
         public Vector4 UVMatrix => uvMatrix;
         public Vector2 UVTranslation => uvTranslation;
-        
+        public bool IsTile => isTile;
+
+        private void Reset()
+        {
+            // 编辑器中添加组件时自动检测：Tilemap 类型默认 IsWall = false
+            if (GetComponent<TilemapRenderer>() != null)
+            {
+                IsWall = false;
+            }
+        }
+
         private void Awake()
         {
             spriteRenderer = GetComponent<SpriteRenderer>();
+
+            if (spriteRenderer != null)
+            {
+                activeRenderer = spriteRenderer;
+                isTile = false;
+            }
+            else
+            {
+                var tilemapRenderer = GetComponent<TilemapRenderer>();
+                if (tilemapRenderer != null)
+                {
+                    activeRenderer = tilemapRenderer;
+                    isTile = true;
+                }
+            }
+
             mpb = new MaterialPropertyBlock();
         }
-        
+
         private void OnEnable()
         {
-            if (spriteRenderer == null)
+            if (activeRenderer == null)
+            {
                 spriteRenderer = GetComponent<SpriteRenderer>();
-            
+                if (spriteRenderer != null)
+                {
+                    activeRenderer = spriteRenderer;
+                    isTile = false;
+                }
+                else
+                {
+                    var tilemapRenderer = GetComponent<TilemapRenderer>();
+                    if (tilemapRenderer != null)
+                    {
+                        activeRenderer = tilemapRenderer;
+                        isTile = true;
+                    }
+                }
+            }
+
             // 非墙体不参与 Polygon BVH 构建
             if (!IsWall) return;
 
@@ -61,7 +106,7 @@ namespace RadianceCascadesWorldBVH
                 PolygonManager.Instance.Register(this, spriteRenderer);
             }
         }
-        
+
         private void OnDisable()
         {
             // 优先从 PolygonManagerCore 反注册
@@ -78,22 +123,23 @@ namespace RadianceCascadesWorldBVH
 
         private void Update()
         {
-            ComputeWorldToAtlasUVTransform();
+            if (!isTile)
+                ComputeWorldToAtlasUVTransform();
             UpdateMaterialPropertyBlock();
         }
-        
+
         private void UpdateMaterialPropertyBlock()
         {
-            if (spriteRenderer == null) return;
-            
-            // 先获取 SpriteRenderer 当前的 MPB（保留其他脚本或 Unity 内部设置的属性）
-            spriteRenderer.GetPropertyBlock(mpb);
-            
+            if (activeRenderer == null) return;
+
+            // 先获取当前的 MPB（保留其他脚本或 Unity 内部设置的属性）
+            activeRenderer.GetPropertyBlock(mpb);
+
             // 计算 z 轴旋转的 cos 和 sin
             float rotationZ = -1 * transform.eulerAngles.z * Mathf.Deg2Rad;
             float cosZ = Mathf.Cos(rotationZ);
             float sinZ = Mathf.Sin(rotationZ);
-            
+
             // 设置旋转属性 (x = cos, y = sin)
             mpb.SetVector(RotationSinCosID, new Vector4(cosZ, sinZ, 0f, 0f));
 
@@ -102,9 +148,9 @@ namespace RadianceCascadesWorldBVH
 
             // 设置gi系数
             mpb.SetFloat(GICoefficientID, giCoefficient);
-            
-            // 应用回 SpriteRenderer
-            spriteRenderer.SetPropertyBlock(mpb);
+
+            // 应用回渲染器
+            activeRenderer.SetPropertyBlock(mpb);
         }
         
         /// <summary>
