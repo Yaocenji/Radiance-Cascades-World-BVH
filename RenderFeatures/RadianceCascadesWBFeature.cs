@@ -75,8 +75,9 @@ namespace RadianceCascadesWorldBVH
             // 摄像机的引用
             private Camera m_Camera;
 
-            // 历史帧 RT 引用（由外部赋值）
-            public RTHandle historyRT;
+            // 跨帧持久的 history RT（存储上一帧 RC light result）
+            private RTHandle m_HistoryRT;
+            public float historyScale = 1.0f;
             
             // RT的引用
             private RTHandle m_Rcwb_Handle_0;
@@ -149,6 +150,17 @@ namespace RadianceCascadesWorldBVH
                 RenderingUtils.ReAllocateIfNeeded(ref m_Rcwb_Direction, radianceDirectionDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_Direction");
                 RenderingUtils.ReAllocateIfNeeded(ref m_Rcwb_Direction_Blur, radianceDirectionDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_Direction_Blur");
 
+                // 历史帧 RT：存储上一帧 RC light result，用于多次弹射
+                int histW = Mathf.Max(1, Mathf.RoundToInt(rcWidth * historyScale));
+                int histH = Mathf.Max(1, Mathf.RoundToInt(rcHeight * historyScale));
+                var historyDesc = new RenderTextureDescriptor(histW, histH, RenderTextureFormat.ARGBHalf, 0)
+                {
+                    msaaSamples = 1,
+                    sRGB = false,
+                    useMipMap = false
+                };
+                RenderingUtils.ReAllocateIfNeeded(ref m_HistoryRT, historyDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_HistoryLight");
+
                 // 特殊的：分配降采样纹理的金字塔缓存
                 int maxIterations = settings.blurIterations;
                 if (m_KawasePyramid == null || m_KawasePyramid.Length != maxIterations)
@@ -203,7 +215,13 @@ namespace RadianceCascadesWorldBVH
                 cmd.SetComputeMatrixParam(rcShader, "MatrixVP_Prev", m_PrevViewProjMatrix);
 
                 // 显式绑定历史帧纹理到 compute kernel
-                cmd.SetComputeTextureParam(rcShader, rcMainKernelHandle, "_RCWB_HistoryColor", historyRT);
+                if (m_HistoryRT != null)
+                {
+                    cmd.SetComputeTextureParam(rcShader, rcMainKernelHandle, "_RCWB_HistoryColor", m_HistoryRT);
+                    int histW = m_HistoryRT.rt.width;
+                    int histH = m_HistoryRT.rt.height;
+                    cmd.SetComputeVectorParam(rcShader, "_RCWB_HistoryColor_TexelSize", new Vector4(1f / histW, 1f / histH, histW, histH));
+                }
                 
                 cmd.SetComputeVectorParam(rcShader, "_CameraResolution_Full", new Vector2(fullWidth, fullHeight));
                 cmd.SetComputeVectorParam(rcShader, "_CameraResolution_Resized", new Vector2(width, height));
@@ -222,6 +240,8 @@ namespace RadianceCascadesWorldBVH
                 cmd.SetComputeFloatParam(rcShader, "_RCWB_SunAngle", settings.sunAngle);
                 cmd.SetComputeFloatParam(rcShader, "_RCWB_SunIntensity", settings.sunIntensity);
                 cmd.SetComputeFloatParam(rcShader, "_RCWB_SunHardness", settings.sunHardness);
+                Debug.Log(settings.bounceIntensity);
+                cmd.SetComputeFloatParam(rcShader, "_RCWB_BounceIntensity", settings.bounceIntensity);
 
                 for (int i = 0; i < settings.cascadeCount; i++)
                 {
@@ -299,7 +319,17 @@ namespace RadianceCascadesWorldBVH
                 cmd.SetGlobalTexture("_RCWB_LightResult_Blur", lightResultHandleBlur);
                 cmd.SetGlobalTexture("_RCWB_DirectionResult", m_Rcwb_Direction);
                 cmd.SetGlobalTexture("_RCWB_DirectionResult_Blur", m_Rcwb_Direction_Blur);
-                
+
+                // 将本帧 RC light result 拷贝到 history RT，供下一帧的多次弹射使用
+                if (m_HistoryRT != null)
+                {
+                    Blitter.BlitCameraTexture(cmd, lightResultHandleBlur, m_HistoryRT);
+                    cmd.SetGlobalTexture("_RCWB_HistoryColor", m_HistoryRT);
+                    int hw = m_HistoryRT.rt.width;
+                    int hh = m_HistoryRT.rt.height;
+                    cmd.SetGlobalVector("_RCWB_HistoryColor_TexelSize", new Vector4(1f / hw, 1f / hh, hw, hh));
+                }
+
                 cmd.EndSample("After RCWB");
                 
                 context.ExecuteCommandBuffer(cmd);
@@ -389,66 +419,6 @@ namespace RadianceCascadesWorldBVH
             public override void OnCameraCleanup(CommandBuffer cmd)
             {
             }
-        }
-
-        // =====================================================================
-        // HistoryCapturePass：渲染结束后将摄像机颜色 blit 到跨帧持久 RT
-        // =====================================================================
-        class HistoryCapturePass : ScriptableRenderPass
-        {
-            /// <summary>相对于屏幕分辨率的缩放系数，默认 0.5（半分辨率）</summary>
-            public float historyScale = 0.5f;
-
-            private RTHandle m_HistoryRT;
-            public RTHandle HistoryRT => m_HistoryRT;
-
-            public HistoryCapturePass()
-            {
-                // 捕获点必须在 post-processing 之前：此时 camera color 仍是线性 HDR，
-                // 避免 tonemap 压缩让反馈闭环陷入非线性色阶分层。
-                renderPassEvent = RenderPassEvent.AfterRenderingTransparents;
-            }
-
-            public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
-            {
-                var srcDesc = renderingData.cameraData.cameraTargetDescriptor;
-                int w = Mathf.Max(1, Mathf.RoundToInt(srcDesc.width  * historyScale));
-                int h = Mathf.Max(1, Mathf.RoundToInt(srcDesc.height * historyScale));
-
-                var desc = new RenderTextureDescriptor(w, h, RenderTextureFormat.ARGBHalf, 0)
-                {
-                    msaaSamples = 1,
-                    sRGB        = false,
-                    useMipMap   = false
-                };
-
-                RenderingUtils.ReAllocateIfNeeded(
-                    ref m_HistoryRT, desc,
-                    FilterMode.Bilinear, TextureWrapMode.Clamp,
-                    name: "_HistoryCaptureRT");
-            }
-
-            public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
-            {
-                if (m_HistoryRT == null) return;
-
-                var cmd = CommandBufferPool.Get("History Capture");
-                cmd.BeginSample("History Capture");
-
-                RTHandle cameraColor = renderingData.cameraData.renderer.cameraColorTargetHandle;
-                Blitter.BlitCameraTexture(cmd, cameraColor, m_HistoryRT);
-                cmd.SetGlobalTexture("_RCWB_HistoryColor", m_HistoryRT);
-                // history RT 的分辨率，供 shader 做 texel snap
-                int w = m_HistoryRT.rt.width;
-                int h = m_HistoryRT.rt.height;
-                cmd.SetGlobalVector("_RCWB_HistoryColor_TexelSize", new Vector4(1f / w, 1f / h, w, h));
-
-                cmd.EndSample("History Capture");
-                context.ExecuteCommandBuffer(cmd);
-                CommandBufferPool.Release(cmd);
-            }
-
-            public override void OnCameraCleanup(CommandBuffer cmd) { }
 
             public void Dispose()
             {
@@ -461,20 +431,16 @@ namespace RadianceCascadesWorldBVH
 
         RcwbRenderPass m_ScriptablePass;
 
-        [Header("历史帧捕获")]
-        [Tooltip("历史帧 RT 相对屏幕分辨率的缩放系数")]
-        [Range(0.1f, 1f)]
-        public float historyScale = 0.5f;
-
-        private HistoryCapturePass m_HistoryCapturePass;
+        [Header("历史帧 (多次弹射)")]
+        [Tooltip("历史帧 RT 相对 RC 分辨率的缩放系数。1.0 = 与 RC 同分辨率")]
+        [Range(0.25f, 1f)]
+        public float historyScale = 1.0f;
 
         /// <inheritdoc/>
         public override void Create()
         {
             m_ScriptablePass = new RcwbRenderPass(settings, rcShader);
             m_ScriptablePass.renderPassEvent = RenderPassEvent.BeforeRenderingOpaques;
-
-            m_HistoryCapturePass = new HistoryCapturePass();
 
             ApplyShaderKeywords();
         }
@@ -490,19 +456,15 @@ namespace RadianceCascadesWorldBVH
             }
 
             // 每帧同步可能在 Inspector 中调整的参数
-            m_HistoryCapturePass.historyScale       = historyScale;
-
-            // 把历史帧 RT 传给 RC pass，用于 compute kernel 显式绑定
-            m_ScriptablePass.historyRT = m_HistoryCapturePass.HistoryRT;
+            m_ScriptablePass.historyScale = historyScale;
 
             // 只有 game 窗口会应用 renderPass
             renderer.EnqueuePass(m_ScriptablePass);
-            renderer.EnqueuePass(m_HistoryCapturePass);
         }
 
         protected override void Dispose(bool disposing)
         {
-            m_HistoryCapturePass?.Dispose();
+            m_ScriptablePass?.Dispose();
         }
 
         private void ApplyShaderKeywords()

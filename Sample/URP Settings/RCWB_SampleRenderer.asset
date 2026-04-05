@@ -18,15 +18,15 @@ MonoBehaviour:
     renderScale: 0.25
     cascadeCount: 6
     rayRange: 35
-    bounceIntensity: 0
+    bounceIntensity: 1
     skyColor: {r: 0.62578607, g: 0.8124066, b: 1, a: 1}
     skyIntensity: 0
     sunColor: {r: 1, g: 0.71370053, b: 0, a: 1}
     sunAngle: -5.34
     sunIntensity: 0
     sunHardness: 2
-    blurIterations: 1
-    blurRadius: 1
+    blurIterations: 2
+    blurRadius: 2
     giHeight: 1
     enableTranslucentObjects: 1
   historyScale: 1
