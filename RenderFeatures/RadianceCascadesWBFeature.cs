@@ -27,6 +27,9 @@ namespace RadianceCascadesWorldBVH
         public int blurIterations = 4;      // 控制降采样的深度，4 是个非常好的默认值
         public float blurRadius = 1.0f;     // 散布半径
 
+        [Header("全局光高度")]
+        public float giHeight = 1.0f;
+
         [Header("Shading Options")]
         [Tooltip("Enable translucent-object branch in shader space (keyword: ENABLE_TRANSLUCENT_OBJECTS).")]
         public bool enableTranslucentObjects = false;
@@ -41,7 +44,8 @@ namespace RadianceCascadesWorldBVH
             Color sunColor,
             float sunAngle,
             float sunIntensity,
-            float sunHardness)
+            float sunHardness,
+            float giHeight)
         {
             this.renderScale = renderScale;
             this.cascadeCount = cascadeCount;
@@ -53,6 +57,7 @@ namespace RadianceCascadesWorldBVH
             this.sunAngle = sunAngle;
             this.sunIntensity = sunIntensity;
             this.sunHardness = sunHardness;
+            this.giHeight = giHeight;
         }
     }
     
@@ -270,6 +275,9 @@ namespace RadianceCascadesWorldBVH
                 cmd.SetGlobalVector("_RCWB_CascadeResolution", new Vector2(rcWidth, rcHeight));
                 cmd.SetGlobalInt("_RCWB_CascadeCount", settings.cascadeCount);
                 cmd.SetGlobalFloat("_RCWB_RayRange_WS", settings.rayRange);
+                // 包含全局光的高度
+                cmd.SetGlobalFloat("_RCWB_GI_Height", settings.giHeight);
+
                 // 最后的最后：将光源和方向的纹理绑定，让后续的渲染中能够采样到
                 cmd.SetGlobalTexture("_RCWB_LightResult", lightResultHandle);
                 cmd.SetGlobalTexture("_RCWB_LightResult_Blur", lightResultHandleBlur);

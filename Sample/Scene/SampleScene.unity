@@ -1421,6 +1421,66 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0, y: 0}
+--- !u!1 &1395714355
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1395714357}
+  - component: {fileID: 1395714356}
+  m_Layer: 0
+  m_Name: Manager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1395714356
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1395714355}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: afccd2787e9364c42ae051772a538c2b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  depthColors:
+  - ifDraw: 1
+    color: {r: 1, g: 1, b: 1, a: 1}
+  - ifDraw: 1
+    color: {r: 1, g: 1, b: 1, a: 1}
+  - ifDraw: 1
+    color: {r: 1, g: 1, b: 1, a: 1}
+  - ifDraw: 1
+    color: {r: 1, g: 1, b: 1, a: 1}
+  - ifDraw: 1
+    color: {r: 1, g: 1, b: 1, a: 1}
+  - ifDraw: 1
+    color: {r: 1, g: 1, b: 1, a: 1}
+  - ifDraw: 1
+    color: {r: 1, g: 1, b: 1, a: 1}
+  sceneAABB: {x: -100, y: -100, z: 100, w: 100}
+--- !u!4 &1395714357
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1395714355}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 2.97449, y: -1.0632699, z: -0.23046273}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1447053337
 GameObject:
   m_ObjectHideFlags: 0
@@ -2004,3 +2064,4 @@ SceneRoots:
   - {fileID: 2058760904}
   - {fileID: 1358492998}
   - {fileID: 664186799}
+  - {fileID: 1395714357}

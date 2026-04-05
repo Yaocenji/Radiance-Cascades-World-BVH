@@ -59,6 +59,8 @@
                 float2 _RotationSinCos; // x=cos, y=sin
             CBUFFER_END
 
+            float _RCWB_GI_Height;
+
             // ---------------------------------------------------------
             // 2. 纹理定义 (分离采样器以提高性能)
             // ---------------------------------------------------------
@@ -149,7 +151,7 @@
                 float2 realDirection2D = directionLength > .0001 ? normalize(lightRCWBGI.direction.xy) : 0;
 
                 // 使用统一的兰伯特函数计算 RCWB GI 光照
-                half3 realDirectionRCWBGI = normalize(half3(normalize(lightRCWBGI.direction.xy), .1));
+                half3 realDirectionRCWBGI = normalize(half3(normalize(lightRCWBGI.direction.xy), _RCWB_GI_Height));
                 half lambertRCWBGI = CalculateLighting(normalWS, realDirectionRCWBGI);
 
                 // 物体内部的光，为了过渡平滑，需要乘上这个
@@ -160,7 +162,10 @@
                 // fragmentZ = 0 表示片元在 Z=0 平面上
                 float3 lightSpot = isInsideSprite ? CalculateAllSpotLights2D_Interior(posWS, normalWS) : CalculateAllSpotLights2D(posWS, normalWS, 0.0, true);
 
-                half3 ansColor = albedo.xyz * lightRCWBGI.color * lambertRCWBGI + albedo.xyz * lightSpot;
+                // 全局光
+                float3 globalLight = .1;
+                
+                half3 ansColor = albedo.xyz * (lightRCWBGI.color * lambertRCWBGI + lightSpot + globalLight);
 
                 // debug:
                 // ansColor = _Emission.rgb;
