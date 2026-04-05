@@ -878,12 +878,8 @@ float CalculateShadowAttenuationInterior(float2 worldPos, float2 lightPos)
 #endif
 }
 
-// 摄像机矩阵
-float4x4 MatrixInvVP;
-float4x4 MatrixVP;
-
 // 像素坐标和世界空间的转换
-float2 posPixel2World(float2 pixelPos, float2 screenParam)
+float2 posPixel2World(float2 pixelPos, float2 screenParam, float4x4 MatrixInvVP)
 {
     float2 uv = pixelPos / screenParam;
     float2 ndc = uv * 2.0 - 1.0;
@@ -896,7 +892,7 @@ float2 posPixel2World(float2 pixelPos, float2 screenParam)
     float2 posWS = posWSRaw.xy / posWSRaw.w;
     return posWS;
 }
-float2 posWorld2Pixel(float3 worldPos, float2 screenParam)
+float2 posWorld2Pixel(float3 worldPos, float2 screenParam, float4x4 MatrixVP)
 {
     // 1. 世界空间 -> 裁剪空间 (Clip Space)
     float4 clipPos = mul(MatrixVP, float4(worldPos, 1.0));
@@ -956,10 +952,10 @@ struct RcwbLightData{
     bool hasDirection;
 };
 
-RcwbLightData GetRcwbLightData(float2 uv, float2 targetRenderSize, out bool isInsideSprite){
+RcwbLightData GetRcwbLightData(float2 uv, float2 targetRenderSize, out bool isInsideSprite, float4x4 MatrixInvVP){
     // 先计算像素坐标和世界坐标
     float2 pixelPos = uv * targetRenderSize;
-    float2 posWS = posPixel2World(pixelPos, targetRenderSize);
+    float2 posWS = posPixel2World(pixelPos, targetRenderSize, MatrixInvVP);
     isInsideSprite = IsInsideSprite(posWS);
 
     RcwbLightData data;

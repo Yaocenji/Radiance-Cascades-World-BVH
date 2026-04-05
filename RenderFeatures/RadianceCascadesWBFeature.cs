@@ -83,6 +83,10 @@ namespace RadianceCascadesWorldBVH
             private RTHandle m_Rcwb_Direction_Blur;
             private RTHandle[] m_KawasePyramid;
             
+            // 上一帧的 VP / InvVP 矩阵（用于 reprojection）
+            private Matrix4x4 m_PrevViewProjMatrix    = Matrix4x4.identity;
+            private Matrix4x4 m_PrevViewProjMatrixInv = Matrix4x4.identity;
+
             // 当前的目标分辨率与RC分辨率
             private int fullWidth;
             private int fullHeight;
@@ -270,6 +274,11 @@ namespace RadianceCascadesWorldBVH
                 // 将RC变量绑定到全局，让后续能访问到
                 cmd.SetGlobalMatrix("MatrixVP", viewProjMatrix);
                 cmd.SetGlobalMatrix("MatrixInvVP", viewProjMatrixInv);
+                cmd.SetGlobalMatrix("MatrixVP_Prev", m_PrevViewProjMatrix);
+                cmd.SetGlobalMatrix("MatrixInvVP_Prev", m_PrevViewProjMatrixInv);
+                // 保存本帧矩阵供下一帧使用
+                m_PrevViewProjMatrix    = viewProjMatrix;
+                m_PrevViewProjMatrixInv = viewProjMatrixInv;
                 cmd.SetGlobalVector("_CameraResolution_Full", new Vector2(fullWidth, fullHeight));
                 cmd.SetGlobalVector("_CameraResolution_Resized", new Vector2(width, height));
                 cmd.SetGlobalVector("_RCWB_CascadeResolution", new Vector2(rcWidth, rcHeight));
@@ -375,14 +384,90 @@ namespace RadianceCascadesWorldBVH
             }
         }
 
+        // =====================================================================
+        // HistoryCapturePass：渲染结束后将摄像机颜色 blit 到跨帧持久 RT
+        // =====================================================================
+        class HistoryCapturePass : ScriptableRenderPass
+        {
+            /// <summary>相对于屏幕分辨率的缩放系数，默认 0.5（半分辨率）</summary>
+            public float historyScale = 0.5f;
+
+            private RTHandle m_HistoryRT;
+
+            public HistoryCapturePass()
+            {
+                // 捕获点必须在 post-processing 之前：此时 camera color 仍是线性 HDR，
+                // 避免 tonemap 压缩让反馈闭环陷入非线性色阶分层。
+                renderPassEvent = RenderPassEvent.AfterRenderingTransparents;
+            }
+
+            public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
+            {
+                var srcDesc = renderingData.cameraData.cameraTargetDescriptor;
+                int w = Mathf.Max(1, Mathf.RoundToInt(srcDesc.width  * historyScale));
+                int h = Mathf.Max(1, Mathf.RoundToInt(srcDesc.height * historyScale));
+
+                var desc = new RenderTextureDescriptor(w, h, RenderTextureFormat.ARGBHalf, 0)
+                {
+                    msaaSamples = 1,
+                    sRGB        = false,
+                    useMipMap   = false
+                };
+
+                RenderingUtils.ReAllocateIfNeeded(
+                    ref m_HistoryRT, desc,
+                    FilterMode.Bilinear, TextureWrapMode.Clamp,
+                    name: "_HistoryCaptureRT");
+            }
+
+            public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
+            {
+                if (m_HistoryRT == null) return;
+
+                var cmd = CommandBufferPool.Get("History Capture");
+                cmd.BeginSample("History Capture");
+
+                RTHandle cameraColor = renderingData.cameraData.renderer.cameraColorTargetHandle;
+                Blitter.BlitCameraTexture(cmd, cameraColor, m_HistoryRT);
+                cmd.SetGlobalTexture("_RCWB_HistoryColor", m_HistoryRT);
+                // history RT 的分辨率，供 shader 做 texel snap
+                int w = m_HistoryRT.rt.width;
+                int h = m_HistoryRT.rt.height;
+                cmd.SetGlobalVector("_RCWB_HistoryColor_TexelSize", new Vector4(1f / w, 1f / h, w, h));
+
+                cmd.EndSample("History Capture");
+                context.ExecuteCommandBuffer(cmd);
+                CommandBufferPool.Release(cmd);
+            }
+
+            public override void OnCameraCleanup(CommandBuffer cmd) { }
+
+            public void Dispose()
+            {
+                m_HistoryRT?.Release();
+                m_HistoryRT = null;
+            }
+        }
+
+        // =====================================================================
+
         RcwbRenderPass m_ScriptablePass;
+
+        [Header("历史帧捕获")]
+        [Tooltip("历史帧 RT 相对屏幕分辨率的缩放系数")]
+        [Range(0.1f, 1f)]
+        public float historyScale = 0.5f;
+
+        private HistoryCapturePass m_HistoryCapturePass;
 
         /// <inheritdoc/>
         public override void Create()
         {
             m_ScriptablePass = new RcwbRenderPass(settings, rcShader);
-
             m_ScriptablePass.renderPassEvent = RenderPassEvent.BeforeRenderingOpaques;
+
+            m_HistoryCapturePass = new HistoryCapturePass();
+
             ApplyShaderKeywords();
         }
 
@@ -395,9 +480,18 @@ namespace RadianceCascadesWorldBVH
             {
                 return;
             }
-            
-            // 只有game窗口会应用renderPass
+
+            // 每帧同步可能在 Inspector 中调整的参数
+            m_HistoryCapturePass.historyScale       = historyScale;
+
+            // 只有 game 窗口会应用 renderPass
             renderer.EnqueuePass(m_ScriptablePass);
+            renderer.EnqueuePass(m_HistoryCapturePass);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            m_HistoryCapturePass?.Dispose();
         }
 
         private void ApplyShaderKeywords()

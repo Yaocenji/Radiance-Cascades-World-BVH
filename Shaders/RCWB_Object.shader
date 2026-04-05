@@ -13,8 +13,6 @@
         _IsWall ("Is Wall (1=Block Light)", Float) = 1.0
         _Occlusion ("Occlusion (0=Transparent, 1=Opaque)", Range(0.0, 1.0)) = 1.0
         
-        /*[HideInInspector]
-        _RC_HistoryTexture ("History Texture", 2D) = "black" {}*/
     }
 
     SubShader
@@ -57,6 +55,14 @@
                 float4 _BumpMap_ST;
                 half4 _Emission;
                 float2 _RotationSinCos; // x=cos, y=sin
+
+                // 摄像机矩阵
+                float4x4 MatrixInvVP;
+                float4x4 MatrixVP;
+                // 上一帧的摄像机矩阵
+                float4x4 MatrixVP_Prev;
+                float4x4 MatrixInvVP_Prev;
+                float4 _RCWB_HistoryColor_TexelSize; // (1/w, 1/h, w, h)
             CBUFFER_END
 
             float _RCWB_GI_Height;
@@ -66,6 +72,7 @@
             // ---------------------------------------------------------
             TEXTURE2D(_MainTex);        SAMPLER(sampler_MainTex);
             TEXTURE2D(_BumpMap);        SAMPLER(sampler_BumpMap);
+            TEXTURE2D(_RCWB_HistoryColor);SAMPLER(sampler_RCWB_HistoryColor);
 
             // ---------------------------------------------------------
             // 3. 输入/输出 结构体
@@ -127,9 +134,26 @@
                 #endif
 
                 // 世界空间
-                float2 posWS = posPixel2World(IN.positionCS.xy, _ScreenParams.xy);
+                float2 posWS = posPixel2World(IN.positionCS.xy, _ScreenParams.xy, MatrixInvVP);
                 // 屏幕空间uv
                 float2 screenUV = IN.positionCS.xy / _ScreenParams.xy;
+                // 上一帧的屏幕空间UV：不绕 world space，直接从 NDC 空间重投影
+                // 避免 pixel→world→pixel 浮点截断在高混合系数下累积漂移
+                float2 ndc = screenUV * 2.0 - 1.0;
+                #if UNITY_UV_STARTS_AT_TOP
+                ndc.y = -ndc.y;
+                #endif
+                float4 clipCur = float4(ndc, 0.0, 1.0);
+                float4 worldH  = mul(MatrixInvVP, clipCur);
+                float4 clipPrev = mul(MatrixVP_Prev, float4(worldH.xyz / worldH.w, 1.0));
+                float2 ndcPrev = clipPrev.xy / clipPrev.w;
+                #if UNITY_UV_STARTS_AT_TOP
+                ndcPrev.y = -ndcPrev.y;
+                #endif
+                float2 screenUV_prev = ndcPrev * 0.5 + 0.5;
+                // snap 到 history RT 的 texel 中心，避免 bilinear 采样引起的迭代模糊
+                // _RCWB_HistoryColor_TexelSize: (1/w, 1/h, w, h)
+                screenUV_prev = (floor(screenUV_prev * _RCWB_HistoryColor_TexelSize.zw) + 0.5) * _RCWB_HistoryColor_TexelSize.xy;
 
                 // 法线
                 half4 packednorm = SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, IN.uv);
@@ -139,7 +163,7 @@
 
                 // RCWB GI
                 bool isInsideSprite = false;
-                RcwbLightData lightRCWBGI = GetRcwbLightData(screenUV,  _ScreenParams.xy, isInsideSprite);
+                RcwbLightData lightRCWBGI = GetRcwbLightData(screenUV,  _ScreenParams.xy, isInsideSprite, MatrixInvVP);
 
                 if (isInsideSprite && length(_Emission.rgb) > 0.0001f)
                 {
@@ -167,10 +191,19 @@
                 
                 half3 ansColor = albedo.xyz * (lightRCWBGI.color * lambertRCWBGI + lightSpot + globalLight);
 
+                // 和上一帧混合
+                half3 historyColor = SAMPLE_TEXTURE2D(_RCWB_HistoryColor, sampler_RCWB_HistoryColor, screenUV_prev).rgb;
+
+                ansColor = lerp(ansColor, historyColor, 0.9f);
+
                 // debug:
                 // ansColor = _Emission.rgb;
                 // ansColor = isInsideSprite;
                 //return length(lightRCWBGI.direction) / 2.0f;
+
+                // debug motion vector
+                // float2 mv = screenUV_prev - screenUV;
+                // return float4(mv, 0, 1);
                 
                 return half4(ansColor, albedo.a * IN.color.a);
             }

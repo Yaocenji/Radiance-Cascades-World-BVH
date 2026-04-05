@@ -9,6 +9,10 @@
 #pragma kernel InvasionDirectionMain
 #pragma multi_compile _ ENABLE_TRANSLUCENT_OBJECTS
 
+// 摄像机矩阵
+float4x4 MatrixInvVP;
+float4x4 MatrixVP;
+
 // 满分辨率
 uint2 _CameraResolution_Full;
 // 缩放后分辨率
@@ -72,10 +76,10 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
     float2 pixelPosInBlock = fmod(id.xy, blockDim);
 
     // 计算世界空间坐标
-    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
+    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution, MatrixInvVP);
 
     // 计算屏幕中心点的世界空间坐标
-    float2 centerPosWS = posPixel2World((float2)_RCWB_CascadeResolution / 2.0f, (float2)_RCWB_CascadeResolution);
+    float2 centerPosWS = posPixel2World((float2)_RCWB_CascadeResolution / 2.0f, (float2)_RCWB_CascadeResolution, MatrixInvVP);
     float2 center2currDir = normalize(posWS - centerPosWS);
     
     // 射线跨越距离
@@ -84,7 +88,7 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
     // 射线起始点（像素空间），是当前甜甜圈的中心点
     float2 probeOriginPS = (pixelPosInBlock + 0.5) * blockSqrtCount;
     // 转换到世界空间
-    float2 probeOriginWS = posPixel2World(probeOriginPS, _RCWB_CascadeResolution);
+    float2 probeOriginWS = posPixel2World(probeOriginPS, _RCWB_CascadeResolution, MatrixInvVP);
 
     min16float4 finalResults = 0;
     
@@ -285,7 +289,7 @@ void DirectionMain (uint3 id : SV_DispatchThreadID){
     if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
         return;
     // 计算世界空间坐标
-    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
+    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution, MatrixInvVP);
 
     const half2 fourDirs[4] = {
     half2( 0.70710678, 0.70710678),
@@ -419,7 +423,7 @@ void InvasionLightMain (uint3 id : SV_DispatchThreadID){
     if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
         return;
     
-    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
+    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution, MatrixInvVP);
     bool isInsideSprite = IsInsideSprite(posWS);
     if (isInsideSprite)
     {
@@ -488,7 +492,7 @@ void InvasionDirectionMain (uint3 id : SV_DispatchThreadID){
     if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
         return;
     
-    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution);
+    float2 posWS = posPixel2World((float2)id.xy, (float2)_RCWB_CascadeResolution, MatrixInvVP);
     bool isInsideSprite = IsInsideSprite(posWS);
     if (isInsideSprite)
     {
