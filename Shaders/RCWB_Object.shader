@@ -187,14 +187,14 @@
                 float3 lightSpot = isInsideSprite ? CalculateAllSpotLights2D_Interior(posWS, normalWS) : CalculateAllSpotLights2D(posWS, normalWS, 0.0, true);
 
                 // 全局光
-                float3 globalLight = .1;
+                float3 globalLight = .0;
                 
-                half3 ansColor = albedo.xyz * (lightRCWBGI.color * lambertRCWBGI + lightSpot + globalLight);
+                half3 ansColor = IN.color.xyz * albedo.xyz * (lightRCWBGI.color * lambertRCWBGI + lightSpot + globalLight);
 
                 // 和上一帧混合
-                half3 historyColor = SAMPLE_TEXTURE2D(_RCWB_HistoryColor, sampler_RCWB_HistoryColor, screenUV_prev).rgb;
+                // half3 historyColor = SAMPLE_TEXTURE2D(_RCWB_HistoryColor, sampler_RCWB_HistoryColor, screenUV_prev).rgb;
 
-                ansColor = lerp(ansColor, historyColor, 0.9f);
+                // ansColor = lerp(ansColor, historyColor, 0.9f);
 
                 // debug:
                 // ansColor = _Emission.rgb;

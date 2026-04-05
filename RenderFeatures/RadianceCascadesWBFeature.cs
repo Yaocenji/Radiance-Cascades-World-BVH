@@ -74,6 +74,9 @@ namespace RadianceCascadesWorldBVH
             
             // 摄像机的引用
             private Camera m_Camera;
+
+            // 历史帧 RT 引用（由外部赋值）
+            public RTHandle historyRT;
             
             // RT的引用
             private RTHandle m_Rcwb_Handle_0;
@@ -197,6 +200,10 @@ namespace RadianceCascadesWorldBVH
                 Matrix4x4 viewProjMatrixInv = Matrix4x4.Inverse(viewProjMatrix);
                 cmd.SetComputeMatrixParam(rcShader, "MatrixVP", viewProjMatrix);
                 cmd.SetComputeMatrixParam(rcShader, "MatrixInvVP", viewProjMatrixInv);
+                cmd.SetComputeMatrixParam(rcShader, "MatrixVP_Prev", m_PrevViewProjMatrix);
+
+                // 显式绑定历史帧纹理到 compute kernel
+                cmd.SetComputeTextureParam(rcShader, rcMainKernelHandle, "_RCWB_HistoryColor", historyRT);
                 
                 cmd.SetComputeVectorParam(rcShader, "_CameraResolution_Full", new Vector2(fullWidth, fullHeight));
                 cmd.SetComputeVectorParam(rcShader, "_CameraResolution_Resized", new Vector2(width, height));
@@ -393,6 +400,7 @@ namespace RadianceCascadesWorldBVH
             public float historyScale = 0.5f;
 
             private RTHandle m_HistoryRT;
+            public RTHandle HistoryRT => m_HistoryRT;
 
             public HistoryCapturePass()
             {
@@ -483,6 +491,9 @@ namespace RadianceCascadesWorldBVH
 
             // 每帧同步可能在 Inspector 中调整的参数
             m_HistoryCapturePass.historyScale       = historyScale;
+
+            // 把历史帧 RT 传给 RC pass，用于 compute kernel 显式绑定
+            m_ScriptablePass.historyRT = m_HistoryCapturePass.HistoryRT;
 
             // 只有 game 窗口会应用 renderPass
             renderer.EnqueuePass(m_ScriptablePass);

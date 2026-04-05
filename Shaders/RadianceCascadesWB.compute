@@ -12,6 +12,8 @@
 // 摄像机矩阵
 float4x4 MatrixInvVP;
 float4x4 MatrixVP;
+float4x4 MatrixVP_Prev;
+float4 _RCWB_HistoryColor_TexelSize; // (1/w, 1/h, w, h)
 
 // 满分辨率
 uint2 _CameraResolution_Full;
@@ -54,6 +56,8 @@ TEXTURE2D(_RCWB_LastResult);
 SAMPLER(sampler_RCWB_LastResult);
 TEXTURE2D(_RCWB_Atlas);
 SAMPLER(sampler_RCWB_Atlas);
+TEXTURE2D(_RCWB_HistoryColor);
+SAMPLER(sampler_RCWB_HistoryColor);
 
 [numthreads(8,8,1)]
 void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
@@ -159,9 +163,21 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
                 
                 // 采样一下atlas
                 float2 atlasUV = WorldToAtlasUV(currInterval.start, currMatData.uvMatrix, currMatData.uvTranslation);
-                float3 sampleColor = SAMPLE_TEXTURE2D_LOD(_RCWB_Atlas, sampler_RCWB_Atlas, atlasUV, 0);
+                float3 sampleColorAtlas = SAMPLE_TEXTURE2D_LOD(_RCWB_Atlas, sampler_RCWB_Atlas, atlasUV, 0);
+                
+                // 根据世界空间计算历史UV
+                float2 histUV = posWorld2Pixel(float3(currInterval.start, 0), (float2)_CameraResolution_Full, MatrixVP_Prev)
+                              / (float2)_CameraResolution_Full;
+                float3 sampleColorHistory = 0;
+                if (all(histUV > 0) && all(histUV < 1))
+                {
+                    // snap 到 texel 中心
+                    histUV = (floor(histUV * _RCWB_HistoryColor_TexelSize.zw) + 0.5)
+                           * _RCWB_HistoryColor_TexelSize.xy;
+                    sampleColorHistory = SAMPLE_TEXTURE2D_LOD(_RCWB_HistoryColor, sampler_RCWB_HistoryColor, histUV, 0).rgb;
+                }
 
-                float3 segmentLight = sampleColor * currMatData.Emission.rgb * defaultAnsRadiance.w;
+                float3 segmentLight = (sampleColorAtlas + sampleColorHistory) * currMatData.Emission.rgb * defaultAnsRadiance.w;
                 
                 defaultAnsRadiance.xyz += segmentLight;
                 defaultAnsRadiance.w *= segmentTransmittance;
@@ -188,10 +204,23 @@ void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
             
             // 采样 atlas 获取颜色
             float2 atlasUV = WorldToAtlasUV(hitResult.hitPoint, hitMat.uvMatrix, hitMat.uvTranslation);
-            float3 sampleColor = SAMPLE_TEXTURE2D_LOD(_RCWB_Atlas, sampler_RCWB_Atlas, atlasUV, 0);
+            float3 sampleColorAtlas = SAMPLE_TEXTURE2D_LOD(_RCWB_Atlas, sampler_RCWB_Atlas, atlasUV, 0);
+
+            // 根据世界空间计算历史UV
+            float2 histUV = posWorld2Pixel(float3(hitResult.hitPoint, 0), (float2)_CameraResolution_Full, MatrixVP_Prev)
+                          / (float2)_CameraResolution_Full;
+            float3 sampleColorHistory = 0;
+            if (all(histUV > 0) && all(histUV < 1))
+            {
+                // snap 到 texel 中心
+                histUV = (floor(histUV * _RCWB_HistoryColor_TexelSize.zw) + 0.5)
+                       * _RCWB_HistoryColor_TexelSize.xy;
+                sampleColorHistory = SAMPLE_TEXTURE2D_LOD(_RCWB_HistoryColor, sampler_RCWB_HistoryColor, histUV, 0).rgb;
+            }
+            
             
             // 直接使用发光颜色，不透明物体完全阻挡后续光线
-            float3 emittedLight = sampleColor * hitMat.Emission.rgb;
+            float3 emittedLight = (sampleColorAtlas + sampleColorHistory) * hitMat.Emission.rgb;
             
             // 不透明模式下，透射率为 0（完全阻挡）
             radiance = float4(emittedLight, 0.0);
