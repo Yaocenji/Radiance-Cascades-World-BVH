@@ -165,11 +165,8 @@ namespace RadianceCascadesWorldBVH
         {
             // 加载配置
             LoadSettings();
-            
-            // 扫描场景中已存在的 RCWBObject
-            ScanAndRegisterExistingObjects();
         }
-        
+
         /// <summary>
         /// 从 PolygonManagerSettings 加载配置
         /// </summary>
@@ -179,25 +176,6 @@ namespace RadianceCascadesWorldBVH
             if (settings != null)
             {
                 SceneAABB = settings.sceneAABB;
-            }
-        }
-        
-        /// <summary>
-        /// 扫描场景中所有活跃的 RCWBObject 并注册
-        /// </summary>
-        private void ScanAndRegisterExistingObjects()
-        {
-            RCWBObject[] existingObjects = UnityEngine.Object.FindObjectsByType<RCWBObject>(FindObjectsSortMode.None);
-            foreach (var obj in existingObjects)
-            {
-                if (obj.isActiveAndEnabled && obj.IsWall)
-                {
-                    SpriteRenderer sr = obj.GetComponent<SpriteRenderer>();
-                    if (sr != null)
-                    {
-                        Register(obj, sr);
-                    }
-                }
             }
         }
         
@@ -246,8 +224,13 @@ namespace RadianceCascadesWorldBVH
                 m_BvhInitialized = true;
             }
             
-            // 绑定 Atlas
-            if (spriteRenderers.Count > 0 && spriteRenderers[0] != null && spriteRenderers[0].sprite != null)
+            // 绑定 Atlas：优先使用 Settings 中的固定 Atlas，避免顺序敏感问题
+            var settings = PolygonManagerSettings.Instance;
+            if (settings != null && settings.atlasTexture != null)
+            {
+                Shader.SetGlobalTexture("_RCWB_Atlas", settings.atlasTexture);
+            }
+            else if (spriteRenderers.Count > 0 && spriteRenderers[0] != null && spriteRenderers[0].sprite != null)
             {
                 BindAtlasGlobal(spriteRenderers[0].sprite);
             }

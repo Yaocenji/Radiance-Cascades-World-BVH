@@ -33,6 +33,10 @@ namespace RadianceCascadesWorldBVH
             }
         }
         
+        [Header("Atlas 绑定")]
+        [Tooltip("指定要绑定到 _RCWB_Atlas 的图集纹理。若留空，则退回到使用第一个已注册对象的 Sprite（顺序敏感，不推荐）")]
+        public Texture2D atlasTexture;
+
         [Header("场景包围盒")]
         [Tooltip("场景的 AABB 包围盒 (minX, minY, maxX, maxY)")]
         public Vector4 sceneAABB = new Vector4(-100, -100, 100, 100);

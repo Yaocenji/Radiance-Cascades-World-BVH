@@ -161,30 +161,8 @@ namespace RadianceCascadesWorldBVH
         
         void Start()
         {
-            // 扫描场景中所有活跃的 RCWBObject，处理启动顺序导致的未注册情况
-            ScanAndRegisterExistingObjects();
-            
             bvhConstructor = new PolygonBVHConstructor(edges, spriteRenderers);
             bvhConstructorAccelerated = new PolygonBVHConstructorAccelerated(edges, spriteRenderers);
-        }
-        
-        /// <summary>
-        /// 扫描场景中所有活跃的 RCWBObject 并注册（用于处理启动顺序问题）
-        /// </summary>
-        private void ScanAndRegisterExistingObjects()
-        {
-            RCWBObject[] existingObjects = FindObjectsByType<RCWBObject>(FindObjectsSortMode.None);
-            foreach (var obj in existingObjects)
-            {
-                if (obj.isActiveAndEnabled && obj.IsWall)
-                {
-                    SpriteRenderer sr = obj.GetComponent<SpriteRenderer>();
-                    if (sr != null)
-                    {
-                        Register(obj, sr);
-                    }
-                }
-            }
         }
         
         /// <summary>
@@ -252,7 +230,12 @@ namespace RadianceCascadesWorldBVH
         // Update is called once per frame
         void Update()
         {
-            if (spriteRenderers.Count > 0)
+            var settings = PolygonManagerSettings.Instance;
+            if (settings != null && settings.atlasTexture != null)
+            {
+                Shader.SetGlobalTexture("_RCWB_Atlas", settings.atlasTexture);
+            }
+            else if (spriteRenderers.Count > 0)
             {
                 BindAtlasGlobal(spriteRenderers[0].sprite);
             }

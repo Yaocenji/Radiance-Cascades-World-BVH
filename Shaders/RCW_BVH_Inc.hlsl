@@ -988,4 +988,13 @@ RcwbLightData GetRcwbLightData(float2 uv, float2 targetRenderSize, out bool isIn
     return data;
 }
 
+
+RcwbLightData GetBlurRcwbLightData(float2 uv, float2 targetRenderSize, float4x4 MatrixInvVP){
+    RcwbLightData data;
+    data.color = SAMPLE_TEXTURE2D(_RCWB_LightResult_Blur, sampler_RCWB_LightResult_Blur, uv).rgb;
+    data.direction = SAMPLE_TEXTURE2D(_RCWB_DirectionResult_Blur, sampler_RCWB_DirectionResult_Blur, uv);
+    data.hasDirection = length(data.direction) > 0.0001;
+    return data;
+}
+
 #endif
