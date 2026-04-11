@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Tilemaps;
@@ -37,6 +37,7 @@ namespace RadianceCascadesWorldBVH
         private static readonly int RotationSinCosID = Shader.PropertyToID("_RotationSinCos");
         private static readonly int EmissionID = Shader.PropertyToID("_Emission");
         private static readonly int GICoefficientID = Shader.PropertyToID("_GICoefficient");
+        private static readonly int IsWallID = Shader.PropertyToID("_IsWall");
 
         public Vector4 UVMatrix => uvMatrix;
         public Vector2 UVTranslation => uvTranslation;
@@ -153,6 +154,9 @@ namespace RadianceCascadesWorldBVH
             // 设置gi系数
             mpb.SetFloat(GICoefficientID, giCoefficient);
 
+            // 设置gi系数
+            mpb.SetFloat(IsWallID, IsWall ? 1f : 0f);
+
             // 应用回渲染器
             activeRenderer.SetPropertyBlock(mpb);
         }
@@ -255,7 +259,7 @@ namespace RadianceCascadesWorldBVH
         private void OnDrawGizmos()
         {
             if (!IsWall) return;
-            DrawContourGizmos(new Color(0.2f, 0.8f, 0.2f, 0.4f));
+            DrawContourGizmos(new Color(0.2f, 0.8f, 0.2f, 0.9f));
         }
 
         private void OnDrawGizmosSelected()

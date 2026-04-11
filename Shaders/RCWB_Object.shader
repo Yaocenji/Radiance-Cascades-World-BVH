@@ -64,6 +64,8 @@
                 float4x4 MatrixVP_Prev;
                 float4x4 MatrixInvVP_Prev;
                 float4 _RCWB_HistoryColor_TexelSize; // (1/w, 1/h, w, h)
+
+                float _IsWall;
             CBUFFER_END
 
             float _RCWB_GI_Height;
@@ -166,6 +168,9 @@
                 bool isInsideSprite = false;
                 RcwbLightData lightRCWBGI = GetRcwbLightData(screenUV,  _ScreenParams.xy, isInsideSprite, MatrixInvVP);
 
+                if (_IsWall >= .999f && !isInsideSprite)
+                    clip(-1);
+
                 if (isInsideSprite && length(_Emission.rgb) > 0.0001f)
                 {
                     lightRCWBGI.color = _Emission.rgb;
@@ -185,7 +190,7 @@
 
                 // SpotLight2D（带阴影和兰伯特）
                 // fragmentZ = 0 表示片元在 Z=0 平面上
-                float3 lightSpot = isInsideSprite ? CalculateAllSpotLights2D_Interior(posWS, normalWS) : CalculateAllSpotLights2D(posWS, normalWS, 0.0, true);
+                float3 lightSpot = /*isInsideSprite ? CalculateAllSpotLights2D_Interior(posWS, normalWS) :*/ CalculateAllSpotLights2D(posWS, normalWS, 0.0, true);
 
                 // 全局光
                 float3 globalLight = .0;
