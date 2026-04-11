@@ -27,11 +27,15 @@ RadianceCascadesWorldBVH/
 │   ├── PolygonManagerSettings.cs         # 配置资产（SceneAABB、Atlas、Profile 输出目录）
 │   ├── PolygonBVHConstructorAccelerated.cs  # Burst/Job BVH 构建器（实际使用）
 │   ├── PolygonBVHConstructor.cs          # 纯 C# BVH 构建器（已弃用，仅保留参考）
-│   └── PolygonManager.cs                 # [OBSOLETE] 旧 MonoBehaviour 管理器，已废弃
+│   ├── PolygonManager.cs                 # [OBSOLETE] 旧 MonoBehaviour 管理器，已废弃
+│   └── Boolean/
+│       ├── Mesh.cs                       # 布尔算法数据结构（Vertex/Edge/Loop/Mesh）
+│       └── BooleanOperation.cs           # 布尔算法核心（Intersection / Addition）
 ├── Editor/
 │   ├── RCWBContourProfileGenerator.cs    # 编辑器工具：从 Sprite 像素生成 ContourProfile
 │   ├── SpritePhysicsShapeGenerator.cs    # 编辑器工具（Legacy）：生成 Sprite 物理形状
-│   └── RCWBContourProfileEditor.cs       # ContourProfile 的自定义 Inspector
+│   ├── RCWBContourProfileEditor.cs       # ContourProfile 的自定义 Inspector
+│   └── RCWBBooleanSubtractTool.cs        # 编辑器工具：多对多布尔减法，结果写回 ContourProfile
 ├── RCWB_Asmd.asmdef                      # 主程序集（引用 Burst/Collections/URP）
 └── Editor/RCWB_Editor_Asmd.asmdef        # Editor 程序集（引用主程序集 + Unity.2D.Sprite.Editor）
 ```
@@ -202,6 +206,10 @@ bool      enableDebugLog
 - 从 Sprite **源纹理**（非 Atlas）读取像素 → Alpha 阈值二值化 → 轮廓追踪 → 去共线简化 → 转换到局部 Unity 单位空间 → 写入 `RCWBContourProfile` 并赋值
 - 批量按钮：处理场景中所有 `IsWall=true && sprite!=null` 的 RCWBObject，静默模式（失败记日志不弹窗，已有文件自动覆盖）
 
+### `Tools/RCWB/Boolean Subtract (A - B)`
+- 对两组 RCWBObject 执行**多对多布尔减法**：A 组每个物体的轮廓，依次减去 B 组所有物体的轮廓，结果写回 A 物体的 `ContourProfile`；B 组物体不受影响
+- 详见第 13 节
+
 ### `Tools/RCWB/Legacy/Sprite Physics Shape Generator`
 - 对单张 Sprite 生成物理形状（写回 Sprite 资产，非 Profile）
 - 坐标系：以 Sprite Rect **中心**为原点，单位为像素（`ISpritePhysicsOutlineDataProvider` 的要求）
@@ -245,3 +253,115 @@ PolygonManagerCore.Instance.LogContourSourceInfo();
 3. **同一 Sprite 不同 Profile**：`ContourProfile` 存储在 `RCWBObject`（场景实例）而非 Sprite 资产上，多个物体共用同一 Sprite 可以有各自独立的轮廓。
 4. **Atlas 绑定顺序敏感**：推荐在 `PolygonManagerSettings.atlasTexture` 中显式指定 Atlas，避免依赖 `spriteRenderers[0]` 的顺序。
 5. **BVH 每帧重建**：当前设计是每帧完整重建 BVH（适合动态场景）；静态场景可考虑加脏标记跳过不变帧。
+
+---
+
+## 13. 布尔减法编辑器工具（RCWBBooleanSubtractTool）
+
+### 13.1 用途
+
+当两个 RCWBObject 的轮廓在世界空间中存在重叠时，BVH 中会出现完全共线的边，导致光照计算精度问题。布尔减法工具用于**预处理轮廓**：让 A 的轮廓减去 B 的轮廓，使两者在边界处分开一条极细缝，彻底消除重叠。
+
+### 13.2 操作语义
+
+**A 组中每个物体**的轮廓，依次减去 **B 组中所有物体**的轮廓，结果写回该 A 物体的 `ContourProfile`。B 组物体不受影响。
+
+数学表达（对单个 A_i）：
+
+```
+result = A_i ∩ (¬inflated_B_1) ∩ (¬inflated_B_2) ∩ … ∩ (¬inflated_B_n)
+```
+
+即链式相减，每次用上一步结果作为新的 A 输入。
+
+### 13.3 等距细缝：先膨胀 B，再做减法
+
+直接做减法会使 A 的新边界与 B 的原始边界**精确重合**，仍有精度问题。  
+解决方案：在布尔运算之前，先将 B 的轮廓向外膨胀 `Epsilon`，使 A−B 的结果与原始 B 之间自然保留等宽间隙。
+
+**膨胀算法（Miter Join）：**
+
+每个顶点沿**顶点外法线（两侧边外法线的角平分线）**移动距离 d：
+
+```
+d = ε / sin(α/2)
+```
+
+其中 α 为该顶点的多边形内角，ε 为目标垂直间距（`Epsilon` 参数）。  
+此公式保证膨胀后对两侧边的**垂直间距均等于 ε**（等距细缝）。
+
+| 内角 α | d（相对 ε） | 说明 |
+|--------|------------|------|
+| 180°（平直） | 1.0ε | 无尖角 |
+| 90°（直角） | 1.41ε | 方角 |
+| 60°（三角） | 2.0ε | 尖角需多走 |
+| ≈ 0°（退化） | → ∞ → clamp | 由 `Miter 上限` 限制 |
+
+**前提假设（无需运行时判断绕向）：**  
+所有 Loop 均为 CCW（逆时针），由 `RCWBContourProfileGenerator` 的追踪算法规范保证。  
+因此外法线方向 = 边方向的右手垂直：`edge dir (dx,dy) → outward normal (dy,−dx)`。
+
+**退化情形处理：**  
+若两侧外法线之和趋近零向量（近似折回尖刺，`|nPrev+nNext|² < 1e-6`），  
+直接以前一法线方向偏移 ε，避免除零。
+
+### 13.4 执行流程
+
+```
+Execute(groupA, groupB, epsilon, miterLimit)
+  for each objA_i in groupA:
+    meshCurrentA ← BuildWorldMesh(objA_i)       // ContourProfile / Sprite fallback → 世界坐标
+
+    for each objB_j in groupB:
+      meshB    ← BuildWorldMesh(objB_j)
+      InflateMesh(meshB, epsilon, miterLimit)    // Miter Join 膨胀
+      meshBRev ← GetReverse(meshB)              // 反转 = ¬B
+      meshC    ← Intersection(meshCurrentA, meshBRev)
+
+      if meshC 为空 AND meshCurrentA 不为空:
+        testPoint ← meshCurrentA 的首个顶点
+        if testPoint 在原始 meshB 外:            // IsPointInsideMesh（射线法）
+          → A 与 B 无交叠，减法无效，静默跳过（保持 meshCurrentA 不变）
+        else:
+          → A 被 B 完全覆盖，结果正确为空，继续传播
+      else:
+        meshCurrentA ← meshC                    // 链式更新
+
+    newLoops ← WorldMeshToProfileLoops(meshCurrentA, objA_i.transform)
+    WriteBack(newLoops → objA_i.ContourProfile)
+```
+
+**坐标转换：**
+- `BuildWorldMesh`：`pointsLocal → transform.TransformPoint() → 世界坐标 BoolMesh`
+- `WorldMeshToProfileLoops`：`世界坐标 → transform.InverseTransformPoint() → pointsLocal`
+
+**临时 GameObject 管理：**  
+`BoolMesh`（`Mesh : MonoBehaviour`）不能直接 `new`，每次操作创建 `HideAndDontSave` 临时 GO 承载。所有临时 GO 记录在 `tempGOs` 列表，`finally` 块统一 `DestroyImmediate`，异常时也不泄漏。
+
+### 13.5 无交叠检测（IsPointInsideMesh）
+
+布尔库的 `CalculateLoopsWhenNoInoutPoints` 在 A 与 ¬B 无边相交时，会通过射线投票判断 A 是否在 ¬B 内部。由于 ¬B 是 CW 反向环，此投票可能不稳定，导致错误返回空结果。
+
+工具在每次 `Intersection` 后检测：若结果为空，对 A 的代表点用射线法检测是否在**原始 B（未反向）**内部：
+
+```
+crossings ← 从 point 向 +X 方向射线与 B 所有边的交叉数
+isInside  ← (crossings & 1) == 1
+```
+
+- **A 在 B 外**（crossings 为偶数）→ 无交叠，静默跳过，A 保持不变
+- **A 在 B 内**（crossings 为奇数）→ A 被完全覆盖，结果正确为空
+
+### 13.6 UI 参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| Group A | （列表）| 被减物体，支持多个；每行显示轮廓来源简标 |
+| Group B | （列表）| 减去物体，支持多个；B 组物体不被修改 |
+| Epsilon（世界单位） | 0.005 | 目标垂直间距，典型值 0.001–0.01 |
+| Miter 上限 | 4 | 最大偏移倍数 d_max/ε，限制尖角处膨胀量 |
+
+**轮廓来源优先级（与运行时一致）：**  
+`ContourProfile`（有效时）> `Sprite.GetPhysicsShape()`（fallback）
+
+若 A 物体尚无 `ContourProfile`，工具会按 §8 路径约定自动创建并赋值，支持 Undo。
