@@ -19,6 +19,7 @@ namespace RadianceCascadesWorldBVH
         // 共享引用：需要传递给GPU的数组
         private List<edgeBVH> edges;
         private List<SpriteRenderer> spriteRenderers;
+        private List<RCWBObject> rcwObjects;
         
         // BVH结果数据（对外暴露，PolygonManager需要用于GPU上传和绘制）
         public LBVHNodeRaw[] nodes;
@@ -47,10 +48,11 @@ namespace RadianceCascadesWorldBVH
         // 是否已释放
         private bool _disposed;
         
-        public PolygonBVHConstructorAccelerated(List<edgeBVH> edges, List<SpriteRenderer> spriteRenderers)
+        public PolygonBVHConstructorAccelerated(List<edgeBVH> edges, List<SpriteRenderer> spriteRenderers, List<RCWBObject> rcwObjects)
         {
             this.edges = edges;
             this.spriteRenderers = spriteRenderers;
+            this.rcwObjects = rcwObjects;
             _allocatedEdgeCapacity = 0;
             _allocatedNodeCapacity = 0;
             _disposed = false;
@@ -105,33 +107,61 @@ namespace RadianceCascadesWorldBVH
         
         /// <summary>
         /// 获取边（此方法涉及 Unity API，无法完全并行化，但数据转换可以优化）
+        /// 优先使用 RCWBObject.ContourProfile（局部 Unity 单位空间，经 transform 转世界坐标），
+        /// Profile 无效时回退到 Sprite 物理形状。
         /// </summary>
         public void GetBvhEdges()
         {
             edges.Clear();
-            
+
             for (int sidx = 0; sidx < spriteRenderers.Count; sidx++)
             {
                 SpriteRenderer spriteRenderer = spriteRenderers[sidx];
-                int loopCount = spriteRenderer.sprite.GetPhysicsShapeCount();
-                
-                for (int i = 0; i < loopCount; i++)
+                RCWBObject rcwObj = (rcwObjects != null && sidx < rcwObjects.Count)
+                    ? rcwObjects[sidx] : null;
+
+                // ── 路径 A：使用自定义 ContourProfile ──────────────────────
+                if (rcwObj != null && rcwObj.ContourProfile != null && rcwObj.ContourProfile.IsValid())
                 {
-                    List<Vector2> points = new List<Vector2>();
-                    int pointCount = spriteRenderer.sprite.GetPhysicsShape(i, points);
-                    
-                    for (int j = 0; j < pointCount; j++)
+                    Transform t = spriteRenderer.transform;
+                    foreach (ContourLoopData loop in rcwObj.ContourProfile.Loops)
                     {
-                        points[j] = spriteRenderer.transform.TransformPoint(points[j].x, points[j].y, 0f);
+                        if (!loop.IsValid()) continue;
+
+                        IReadOnlyList<Vector2> pts = loop.PointsLocal;
+                        int pointCount = pts.Count;
+                        int edgeCount  = loop.Closed ? pointCount : pointCount - 1;
+
+                        for (int j = 0; j < edgeCount; j++)
+                        {
+                            edgeBVH edge = new edgeBVH();
+                            edge.start  = t.TransformPoint(pts[j].x, pts[j].y, 0f);
+                            edge.end    = t.TransformPoint(pts[(j + 1) % pointCount].x, pts[(j + 1) % pointCount].y, 0f);
+                            edge.matIdx = sidx;
+                            edges.Add(edge);
+                        }
                     }
-                    
-                    for (int j = 0; j < pointCount; j++)
+                }
+                // ── 路径 B：回退到 Sprite 物理形状 ─────────────────────────
+                else
+                {
+                    int loopCount = spriteRenderer.sprite.GetPhysicsShapeCount();
+                    for (int i = 0; i < loopCount; i++)
                     {
-                        edgeBVH edge = new edgeBVH();
-                        edge.start = points[j % pointCount];
-                        edge.end = points[(j + 1) % pointCount];
-                        edge.matIdx = sidx;
-                        edges.Add(edge);
+                        List<Vector2> points = new List<Vector2>();
+                        int pointCount = spriteRenderer.sprite.GetPhysicsShape(i, points);
+
+                        for (int j = 0; j < pointCount; j++)
+                            points[j] = spriteRenderer.transform.TransformPoint(points[j].x, points[j].y, 0f);
+
+                        for (int j = 0; j < pointCount; j++)
+                        {
+                            edgeBVH edge = new edgeBVH();
+                            edge.start  = points[j];
+                            edge.end    = points[(j + 1) % pointCount];
+                            edge.matIdx = sidx;
+                            edges.Add(edge);
+                        }
                     }
                 }
             }
@@ -369,6 +399,44 @@ namespace RadianceCascadesWorldBVH
         }
         
         public int GpuNodeCount => edges?.Count > 0 ? 2 * edges.Count - 1 : 0;
+
+        /// <summary>
+        /// 输出每个注册物体当前使用的轮廓来源到控制台。
+        /// 自定义 ContourProfile 优先；无效时 fallback 到 Sprite 物理形状。
+        /// </summary>
+        public void LogContourSourceInfo()
+        {
+            if (spriteRenderers == null || spriteRenderers.Count == 0)
+            {
+                Debug.Log("[RCWB BVH] 当前没有已注册的物体。");
+                return;
+            }
+
+            for (int i = 0; i < spriteRenderers.Count; i++)
+            {
+                SpriteRenderer sr = spriteRenderers[i];
+                RCWBObject rcwObj = (rcwObjects != null && i < rcwObjects.Count) ? rcwObjects[i] : null;
+                string objName = sr != null ? sr.gameObject.name : $"[null #{i}]";
+
+                if (rcwObj != null && rcwObj.ContourProfile != null && rcwObj.ContourProfile.IsValid())
+                {
+                    int edgeCount = rcwObj.ContourProfile.GetEdgeCount();
+                    Debug.Log($"[RCWB BVH] [{i}] <b>{objName}</b> → " +
+                              $"<color=cyan>自定义 ContourProfile</color> " +
+                              $"(\"{rcwObj.ContourProfile.name}\", {rcwObj.ContourProfile.LoopCount} 个环, {edgeCount} 条边)");
+                }
+                else
+                {
+                    int shapeCount = sr?.sprite != null ? sr.sprite.GetPhysicsShapeCount() : 0;
+                    string reason = rcwObj == null          ? "rcwObj 为空" :
+                                    rcwObj.ContourProfile == null ? "ContourProfile 未赋值" :
+                                                                    "ContourProfile 校验失败";
+                    Debug.Log($"[RCWB BVH] [{i}] <b>{objName}</b> → " +
+                              $"<color=yellow>Sprite 物理形状 (fallback)</color> " +
+                              $"({shapeCount} 个轮廓, 原因: {reason})");
+                }
+            }
+        }
         
         public void Dispose()
         {

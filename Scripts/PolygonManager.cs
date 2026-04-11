@@ -89,6 +89,7 @@ namespace RadianceCascadesWorldBVH
         }
     }
     
+    [System.Obsolete("PolygonManager 已废弃，请使用 PolygonManagerCore（PlayerLoop 驱动，无需场景挂载）。")]
     public class PolygonManager : MonoBehaviour
     {
         // 静态实例，用于 RCWBObject 的注册/反注册
@@ -97,7 +98,7 @@ namespace RadianceCascadesWorldBVH
         [Header("Debug Settings")]
         // 每一层深度的颜色，如果深度超过列表长度，会循环使用
         public List<BVHDrawParam> depthColors = new List<BVHDrawParam>() 
-        { 
+        {
             new BVHDrawParam(true, Color.white), 
             new BVHDrawParam(true, Color.white), 
             new BVHDrawParam(true, Color.white), 
@@ -149,6 +150,7 @@ namespace RadianceCascadesWorldBVH
         
         private void Awake()
         {
+            Debug.LogWarning("[PolygonManager] 此组件已废弃，请改用 PolygonManagerCore（PlayerLoop 驱动，无需场景挂载）。", this);
             // 设置单例实例
             if (Instance != null && Instance != this)
             {
@@ -162,7 +164,7 @@ namespace RadianceCascadesWorldBVH
         void Start()
         {
             bvhConstructor = new PolygonBVHConstructor(edges, spriteRenderers);
-            bvhConstructorAccelerated = new PolygonBVHConstructorAccelerated(edges, spriteRenderers);
+            bvhConstructorAccelerated = new PolygonBVHConstructorAccelerated(edges, spriteRenderers, rcwObjects);
         }
         
         /// <summary>
@@ -364,12 +366,26 @@ namespace RadianceCascadesWorldBVH
             gpuNodeEdgeBuffer?.Release();
             materialBuffer?.Release();
             bvhConstructorAccelerated?.Dispose();
-            
+
             // 清理单例引用
             if (Instance == this)
             {
                 Instance = null;
             }
+        }
+
+        /// <summary>
+        /// 在 Inspector 右键菜单中调用，输出每个物体的轮廓来源信息。
+        /// </summary>
+        [ContextMenu("Log Contour Source Info")]
+        public void LogContourSourceInfo()
+        {
+            if (bvhConstructorAccelerated == null)
+            {
+                Debug.Log("[RCWB BVH] BVH 构建器尚未初始化。");
+                return;
+            }
+            bvhConstructorAccelerated.LogContourSourceInfo();
         }
         
         

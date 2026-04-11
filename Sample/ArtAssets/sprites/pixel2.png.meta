@@ -53,7 +53,7 @@ TextureImporter:
   spriteGenerateFallbackPhysicsShape: 1
   alphaUsage: 1
   alphaIsTransparency: 1
-  spriteTessellationDetail: -1
+  spriteTessellationDetail: 0
   textureType: 8
   textureShape: 1
   singleChannelComponent: 0
@@ -98,66 +98,15 @@ TextureImporter:
     sprites: []
     outline: []
     physicsShape:
-    - - {x: -3, y: -11}
-      - {x: 1, y: -11}
-      - {x: 1, y: -10}
-      - {x: 5, y: -10}
-      - {x: 5, y: -2}
-      - {x: 7, y: -2}
-      - {x: 7, y: -1}
-      - {x: 10, y: -1}
-      - {x: 10, y: 0}
-      - {x: 12, y: 0}
-      - {x: 12, y: 6}
-      - {x: 11, y: 6}
-      - {x: 11, y: 8}
-      - {x: 10, y: 8}
-      - {x: 10, y: 10}
-      - {x: 9, y: 10}
-      - {x: 9, y: 11}
-      - {x: 7, y: 11}
-      - {x: 7, y: 12}
-      - {x: 3, y: 12}
-      - {x: 3, y: 11}
-      - {x: 1, y: 11}
-      - {x: 1, y: 10}
-      - {x: -1, y: 10}
-      - {x: -1, y: 11}
-      - {x: -2, y: 11}
-      - {x: -2, y: 12}
-      - {x: -4, y: 12}
-      - {x: -4, y: 13}
-      - {x: -5, y: 13}
-      - {x: -5, y: 14}
-      - {x: -7, y: 14}
-      - {x: -7, y: 15}
-      - {x: -9, y: 15}
-      - {x: -9, y: 14}
-      - {x: -11, y: 14}
-      - {x: -11, y: 13}
-      - {x: -12, y: 13}
-      - {x: -12, y: 6}
-      - {x: -11, y: 6}
-      - {x: -11, y: 5}
-      - {x: -10, y: 5}
-      - {x: -10, y: 4}
-      - {x: -8, y: 4}
-      - {x: -8, y: 2}
-      - {x: -10, y: 2}
-      - {x: -10, y: 1}
-      - {x: -12, y: 1}
-      - {x: -12, y: 0}
-      - {x: -13, y: 0}
-      - {x: -13, y: -4}
-      - {x: -12, y: -4}
-      - {x: -12, y: -5}
-      - {x: -10, y: -5}
-      - {x: -10, y: -6}
-      - {x: -5, y: -6}
-      - {x: -5, y: -7}
-      - {x: -4, y: -7}
-      - {x: -4, y: -10}
-      - {x: -3, y: -10}
+    - - {x: -12, y: 16}
+      - {x: -14, y: 13}
+      - {x: -15, y: 3}
+      - {x: -15, y: -5}
+      - {x: -5, y: -13}
+      - {x: 6, y: -13}
+      - {x: 14, y: -4}
+      - {x: 14, y: 8}
+      - {x: 12, y: 16}
     bones: []
     spriteID: 5e97eb03825dee720800000000000000
     internalID: 1537655665

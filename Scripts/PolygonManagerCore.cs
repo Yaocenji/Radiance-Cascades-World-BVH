@@ -220,7 +220,7 @@ namespace RadianceCascadesWorldBVH
             if (!m_BvhInitialized)
             {
                 bvhConstructor = new PolygonBVHConstructor(edges, spriteRenderers);
-                bvhConstructorAccelerated = new PolygonBVHConstructorAccelerated(edges, spriteRenderers);
+                bvhConstructorAccelerated = new PolygonBVHConstructorAccelerated(edges, spriteRenderers, rcwObjects);
                 m_BvhInitialized = true;
             }
             
@@ -340,6 +340,19 @@ namespace RadianceCascadesWorldBVH
         public List<MaterialData> Materials => materialData;
         public PolygonBVHConstructorAccelerated BvhConstructor => bvhConstructorAccelerated;
         public int RegisteredObjectCount => rcwObjects.Count;
+
+        /// <summary>
+        /// 输出所有已注册物体的轮廓来源（自定义 Profile / Sprite 物理形状）到控制台。
+        /// </summary>
+        public void LogContourSourceInfo()
+        {
+            if (!m_BvhInitialized)
+            {
+                Debug.Log("[RCWB BVH] BVH 构建器尚未初始化，请等待第一帧 Update 后再调用。");
+                return;
+            }
+            bvhConstructorAccelerated.LogContourSourceInfo();
+        }
         
         #endregion
     }

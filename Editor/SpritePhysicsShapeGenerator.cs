@@ -5,6 +5,7 @@ using System.Linq;
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.U2D.Sprites;
+using RadianceCascadesWorldBVH;
 
 namespace RadianceCascadesWorldBVH.Editor
 {
@@ -15,7 +16,7 @@ namespace RadianceCascadesWorldBVH.Editor
         private bool useAlphaOnly = true;
         private float alphaThreshold = 0.01f;
 
-        [MenuItem("Tools/RCWB/Sprite Physics Shape Generator")]
+        [MenuItem("Tools/RCWB/Legacy/Sprite Physics Shape Generator")]
         public static void ShowWindow()
         {
             GetWindow<SpritePhysicsShapeGenerator>("Physics Shape Generator");
@@ -38,12 +39,18 @@ namespace RadianceCascadesWorldBVH.Editor
 
             EditorGUILayout.Space();
 
+            // 单个生成
             EditorGUI.BeginDisabledGroup(targetSprite == null);
             if (GUILayout.Button("生成 Custom Physics Shape", GUILayout.Height(30)))
-            {
                 GeneratePhysicsShape(targetSprite);
-            }
             EditorGUI.EndDisabledGroup();
+
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
+
+            // 批量生成
+            if (GUILayout.Button("批量生成（场景所有合法 RCWBObject 的 Sprite）", GUILayout.Height(30)))
+                GenerateAllPhysicsShapes();
 
             EditorGUILayout.Space();
             EditorGUILayout.HelpBox(
@@ -54,6 +61,43 @@ namespace RadianceCascadesWorldBVH.Editor
                 "4. 去除共线冗余顶点\n" +
                 "5. 写入 Custom Physics Shape",
                 MessageType.Info);
+        }
+
+        private void GenerateAllPhysicsShapes()
+        {
+            // 收集场景中所有合法 RCWBObject 使用的不重复 Sprite
+            var sprites = Object.FindObjectsOfType<RCWBObject>()
+                .Where(o => o.IsWall && o.GetComponent<SpriteRenderer>()?.sprite != null)
+                .Select(o => o.GetComponent<SpriteRenderer>().sprite)
+                .Distinct()
+                .ToList();
+
+            if (sprites.Count == 0)
+            {
+                EditorUtility.DisplayDialog("提示", "场景中没有找到合法的 RCWBObject\n（IsWall=true 且具有 Sprite）。", "确定");
+                return;
+            }
+
+            int success = 0;
+            for (int i = 0; i < sprites.Count; i++)
+            {
+                EditorUtility.DisplayProgressBar(
+                    "批量生成 Physics Shape",
+                    sprites[i].name,
+                    (float)i / sprites.Count);
+                try
+                {
+                    GeneratePhysicsShape(sprites[i]);
+                    success++;
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogError($"[RCWB] 生成 '{sprites[i].name}' 时出错：{e.Message}");
+                }
+            }
+
+            EditorUtility.ClearProgressBar();
+            Debug.Log($"[RCWB] 批量生成完成：{success}/{sprites.Count} 个 Sprite 成功。");
         }
 
         /// <summary>

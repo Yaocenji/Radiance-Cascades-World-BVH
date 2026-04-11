@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Tilemaps;
 
@@ -8,6 +9,9 @@ namespace RadianceCascadesWorldBVH
     {
         [Tooltip("是否作为墙体参与 Polygon BVH 构建")]
         public bool IsWall = true;
+
+        [Tooltip("自定义轮廓 Profile（优先于 Sprite 物理形状）。留空则退回到 Sprite 物理形状。")]
+        public RCWBContourProfile ContourProfile;
 
         public Color BasicColor;       // 基础颜色
 
@@ -248,6 +252,63 @@ namespace RadianceCascadesWorldBVH
             );
         }
         
+        private void OnDrawGizmos()
+        {
+            if (!IsWall) return;
+            DrawContourGizmos(new Color(0.2f, 0.8f, 0.2f, 0.4f));
+        }
+
+        private void OnDrawGizmosSelected()
+        {
+            if (!IsWall) return;
+            DrawContourGizmos(new Color(0.8f, 0.1f, 0.8f, 1.0f));
+        }
+
+        private void DrawContourGizmos(Color color)
+        {
+            Gizmos.color = color;
+
+            if (ContourProfile != null && ContourProfile.IsValid())
+            {
+                // 使用 ContourProfile 的局部空间点，经 transform 转到世界空间
+                foreach (ContourLoopData loop in ContourProfile.Loops)
+                {
+                    if (!loop.IsValid()) continue;
+
+                    IReadOnlyList<Vector2> pts = loop.PointsLocal;
+                    int count = pts.Count;
+                    int edgeCount = loop.Closed ? count : count - 1;
+
+                    for (int i = 0; i < edgeCount; i++)
+                    {
+                        Vector3 a = transform.TransformPoint(new Vector3(pts[i].x, pts[i].y, 0f));
+                        Vector3 b = transform.TransformPoint(new Vector3(pts[(i + 1) % count].x, pts[(i + 1) % count].y, 0f));
+                        Gizmos.DrawLine(a, b);
+                    }
+                }
+            }
+            else if (spriteRenderer != null && spriteRenderer.sprite != null)
+            {
+                // 回退：绘制 Sprite 物理形状
+                Sprite spr = spriteRenderer.sprite;
+                int shapeCount = spr.GetPhysicsShapeCount();
+                var shapePoints = new List<Vector2>();
+
+                for (int s = 0; s < shapeCount; s++)
+                {
+                    shapePoints.Clear();
+                    int ptCount = spr.GetPhysicsShape(s, shapePoints);
+
+                    for (int i = 0; i < ptCount; i++)
+                    {
+                        Vector3 a = transform.TransformPoint(shapePoints[i]);
+                        Vector3 b = transform.TransformPoint(shapePoints[(i + 1) % ptCount]);
+                        Gizmos.DrawLine(a, b);
+                    }
+                }
+            }
+        }
+
         /// <summary>
         /// 使用计算好的变换，将世界空间点转换为Atlas UV坐标（用于调试验证）
         /// </summary>

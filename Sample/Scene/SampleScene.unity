@@ -153,6 +153,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: 9112bc9e49ca9f440b9a0af370e79081, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 50000
   Emission: {r: 0, g: 0, b: 0, a: 0}
@@ -322,6 +323,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 0
+  ContourProfile: {fileID: 0}
   BasicColor: {r: 1, g: 1, b: 1, a: 0}
   Density: 0
   Emission: {r: 0, g: 0, b: 0, a: 0}
@@ -424,6 +426,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: 4ea17a2edcb012340b712f8a16b5c503, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 50000
   Emission: {r: 0, g: 0, b: 0, a: 0}
@@ -593,6 +596,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: 6b2977e47ac50c3428ba30ea69d5e6d0, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 5000
   Emission: {r: 0, g: 0, b: 0, a: 1}
@@ -966,6 +970,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: 29c440907ccf3be4684b4e1c5cb0c325, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 50000
   Emission: {r: 0, g: 0, b: 0, a: 0}
@@ -1136,6 +1141,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: fcbd84fda1f415a4c988ffeb97ed775d, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 50000
   Emission: {r: 0, g: 0, b: 0, a: 0}
@@ -1331,6 +1337,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: 98bd3f97e0e302e48b76648f0dd6c0eb, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 50000
   Emission: {r: 1.4980394, g: 1.4980394, b: 1.4980394, a: 1}
@@ -1685,6 +1692,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: c99133a8bf9707744acfc1093f265c06, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 50000
   Emission: {r: 0.00026531244, g: 0.0000773828, b: 0.00027636718, a: 0}
@@ -1720,6 +1728,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: 03087ca18dc6c234d888a0c20bc22076, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 50000
   Emission: {r: 0, g: 0, b: 0, a: 0}
@@ -1895,66 +1904,6 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0, y: 0}
---- !u!1 &1395714355
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1395714357}
-  - component: {fileID: 1395714356}
-  m_Layer: 0
-  m_Name: Manager
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &1395714356
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1395714355}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: afccd2787e9364c42ae051772a538c2b, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  depthColors:
-  - ifDraw: 1
-    color: {r: 1, g: 1, b: 1, a: 1}
-  - ifDraw: 1
-    color: {r: 1, g: 1, b: 1, a: 1}
-  - ifDraw: 1
-    color: {r: 1, g: 1, b: 1, a: 1}
-  - ifDraw: 1
-    color: {r: 1, g: 1, b: 1, a: 1}
-  - ifDraw: 1
-    color: {r: 1, g: 1, b: 1, a: 1}
-  - ifDraw: 1
-    color: {r: 1, g: 1, b: 1, a: 1}
-  - ifDraw: 1
-    color: {r: 1, g: 1, b: 1, a: 1}
-  sceneAABB: {x: -100, y: -100, z: 100, w: 100}
---- !u!4 &1395714357
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1395714355}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 2.97449, y: -1.0632699, z: -0.23046273}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1447053337
 GameObject:
   m_ObjectHideFlags: 0
@@ -2053,6 +2002,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: be2d7c1f62d1ce8499a6d9514b099560, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 50000
   Emission: {r: 0.000402114, g: 0.00066253066, b: 0.0009765625, a: 0}
@@ -2155,6 +2105,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: 2cc81affa825a3643be550670eb7847b, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 50000
   Emission: {r: 0.00073146453, g: 0, b: 0, a: 0}
@@ -2257,6 +2208,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: f2af988da7d394a49a70b61e1869aadc, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 50000
   Emission: {r: 0, g: 0, b: 0, a: 0}
@@ -2452,6 +2404,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: a4b58b6f96dc0244b87d585ba17a2eb5, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 5000
   Emission: {r: 0, g: 0, b: 0, a: 1}
@@ -2554,6 +2507,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsWall: 1
+  ContourProfile: {fileID: 11400000, guid: db78b487de9fdd84ba6d1e8133c623cc, type: 2}
   BasicColor: {r: 1, g: 1, b: 1, a: 1}
   Density: 50000
   Emission: {r: 0, g: 0, b: 0, a: 0}
@@ -2637,4 +2591,3 @@ SceneRoots:
   - {fileID: 2058760904}
   - {fileID: 1358492998}
   - {fileID: 664186799}
-  - {fileID: 1395714357}

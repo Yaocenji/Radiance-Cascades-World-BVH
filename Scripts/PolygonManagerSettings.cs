@@ -41,6 +41,10 @@ namespace RadianceCascadesWorldBVH
         [Tooltip("场景的 AABB 包围盒 (minX, minY, maxX, maxY)")]
         public Vector4 sceneAABB = new Vector4(-100, -100, 100, 100);
         
+        [Header("Contour Profile 生成")]
+        [Tooltip("生成 RCWBContourProfile 时的根目录。\n留空 = 方案A：紧邻场景文件，存至 {SceneDir}/{SceneName}_RCWBProfiles/\n填写路径 = 方案D：{此路径}/{SceneName}/{GameObjectName}_ContourProfile.asset")]
+        public string defaultProfileFolder = "";
+
         [Header("调试设置")]
         [Tooltip("是否在控制台输出调试信息")]
         public bool enableDebugLog = false;

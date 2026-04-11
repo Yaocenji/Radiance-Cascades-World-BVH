@@ -240,7 +240,6 @@ namespace RadianceCascadesWorldBVH
                 cmd.SetComputeFloatParam(rcShader, "_RCWB_SunAngle", settings.sunAngle);
                 cmd.SetComputeFloatParam(rcShader, "_RCWB_SunIntensity", settings.sunIntensity);
                 cmd.SetComputeFloatParam(rcShader, "_RCWB_SunHardness", settings.sunHardness);
-                Debug.Log(settings.bounceIntensity);
                 cmd.SetComputeFloatParam(rcShader, "_RCWB_BounceIntensity", settings.bounceIntensity);
 
                 for (int i = 0; i < settings.cascadeCount; i++)

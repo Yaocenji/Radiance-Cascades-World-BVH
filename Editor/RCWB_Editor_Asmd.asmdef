@@ -2,7 +2,8 @@
     "name": "RCWB_Editor_Asmd",
     "rootNamespace": "",
     "references": [
-        "GUID:2c573e6b271651846a79655161004c5b"
+        "GUID:41cdbe9215a1e0548b346e4a3f969acd",
+        "Unity.2D.Sprite.Editor"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
