@@ -320,20 +320,38 @@ namespace RadianceCascadesWorldBVH.Editor
 
             string sceneDir  = Path.GetDirectoryName(scene.path).Replace('\\', '/');
             string sceneName = Path.GetFileNameWithoutExtension(scene.path);
-            string goName    = SanitizeFileName(obj.gameObject.name);
+            string uniqueName = SanitizeFileName(GetHierarchyPath(obj.gameObject));
 
             var settings = PolygonManagerSettings.Instance;
             if (settings != null && !string.IsNullOrEmpty(settings.defaultProfileFolder))
             {
                 // 方案 D：用户自定义根目录
                 string root = settings.defaultProfileFolder.TrimEnd('/');
-                return $"{root}/{sceneName}/{goName}_ContourProfile.asset";
+                return $"{root}/{sceneName}/{uniqueName}_ContourProfile.asset";
             }
             else
             {
                 // 方案 A：紧邻场景目录
-                return $"{sceneDir}/{sceneName}_RCWBProfiles/{goName}_ContourProfile.asset";
+                return $"{sceneDir}/{sceneName}_RCWBProfiles/{uniqueName}_ContourProfile.asset";
             }
+        }
+
+        /// <summary>
+        /// 返回从场景根到该 GameObject 的层级路径，以 "__" 连接各层名称。
+        /// 例如：父节点 "Room" 下的 "Wall" → "Room__Wall"。
+        /// 同一场景中层级路径唯一，可作为持久文件名标识。
+        /// </summary>
+        private static string GetHierarchyPath(GameObject go)
+        {
+            var parts = new System.Collections.Generic.List<string>();
+            Transform t = go.transform;
+            while (t != null)
+            {
+                parts.Add(t.name);
+                t = t.parent;
+            }
+            parts.Reverse();
+            return string.Join("__", parts);
         }
 
         private static string SanitizeFileName(string name)

@@ -1,6 +1,9 @@
-using UnityEditor;
+
 using UnityEngine;
 using UnityEngine.Rendering;
+
+#if UNITY_EDITOR
+using UnityEditor;
 
 namespace RadianceCascadesWorldBVH
 {
@@ -58,3 +61,5 @@ namespace RadianceCascadesWorldBVH
         }
     }
 }
+
+#endif

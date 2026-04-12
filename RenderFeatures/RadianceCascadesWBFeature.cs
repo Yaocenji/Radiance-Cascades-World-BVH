@@ -66,22 +66,33 @@ namespace RadianceCascadesWorldBVH
         private const string TranslucentObjectsKeyword = "ENABLE_TRANSLUCENT_OBJECTS";
         public ComputeShader rcShader;
         public RcwbSettings settings;
+
+        // Feature 级共享字段：RcwbRenderPass 写入本帧结果，SceneColorHistoryPass 在更晚阶段读取
+        internal RTHandle FrameLightResult;
+        internal RTHandle FrameLightResultBlur;
         
         class RcwbRenderPass : ScriptableRenderPass
         {
             public ComputeShader rcShader;
             public RcwbSettings settings;
-            
+
+            // Feature 引用，用于写入本帧共享信息
+            private readonly RadianceCascadesWBFeature m_Feature;
+
             // 摄像机的引用
             private Camera m_Camera;
 
             // 跨帧持久的 history RT（存储上一帧 RC light result）
-            private RTHandle m_HistoryRT;
+            private RTHandle m_HistoryRT_Blur;
+            private RTHandle m_HistoryRT_NoBlur;
             public float historyScale = 1.0f;
+            public float historyWeight = 0.85f;
             
             // RT的引用
             private RTHandle m_Rcwb_Handle_0;
             private RTHandle m_Rcwb_Handle_1;
+            private RTHandle m_Rcwb_TemporalHandle_0;
+            private RTHandle m_Rcwb_TemporalHandle_1;
             //private RTHandle m_Rcwb_Handle_StencilFullResolution;
             private RTHandle m_Rcwb_Direction;
             private RTHandle m_Rcwb_Direction_Blur;
@@ -99,10 +110,11 @@ namespace RadianceCascadesWorldBVH
             private int rcWidth;
             private int rcHeight;
 
-            public RcwbRenderPass(RcwbSettings settings, ComputeShader rcShader)
+            public RcwbRenderPass(RcwbSettings settings, ComputeShader rcShader, RadianceCascadesWBFeature feature)
             {
                 this.settings = settings;
                 this.rcShader = rcShader;
+                m_Feature = feature;
             }
             
             public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
@@ -146,6 +158,8 @@ namespace RadianceCascadesWorldBVH
                 // 动态地分配显存
                 RenderingUtils.ReAllocateIfNeeded(ref m_Rcwb_Handle_0, radianceDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_0");
                 RenderingUtils.ReAllocateIfNeeded(ref m_Rcwb_Handle_1, radianceDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_1");
+                RenderingUtils.ReAllocateIfNeeded(ref m_Rcwb_TemporalHandle_0, radianceDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_Temporal_0");
+                RenderingUtils.ReAllocateIfNeeded(ref m_Rcwb_TemporalHandle_1, radianceDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_Temporal_1");
                 //RenderingUtils.ReAllocateIfNeeded(ref m_Rcwb_Handle_StencilFullResolution, radianceFullResolutionDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_FullResolution");
                 RenderingUtils.ReAllocateIfNeeded(ref m_Rcwb_Direction, radianceDirectionDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_Direction");
                 RenderingUtils.ReAllocateIfNeeded(ref m_Rcwb_Direction_Blur, radianceDirectionDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_Direction_Blur");
@@ -159,7 +173,10 @@ namespace RadianceCascadesWorldBVH
                     sRGB = false,
                     useMipMap = false
                 };
-                RenderingUtils.ReAllocateIfNeeded(ref m_HistoryRT, historyDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_HistoryLight");
+                RenderingUtils.ReAllocateIfNeeded(ref m_HistoryRT_Blur, historyDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_HistoryLight_Blur");
+                
+                RenderingUtils.ReAllocateIfNeeded(ref m_HistoryRT_NoBlur, historyDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_RCWB_HistoryLight_NoBlur");
+                
 
                 // 特殊的：分配降采样纹理的金字塔缓存
                 int maxIterations = settings.blurIterations;
@@ -215,12 +232,20 @@ namespace RadianceCascadesWorldBVH
                 cmd.SetComputeMatrixParam(rcShader, "MatrixVP_Prev", m_PrevViewProjMatrix);
 
                 // 显式绑定历史帧纹理到 compute kernel
-                if (m_HistoryRT != null)
+                if (m_HistoryRT_Blur != null)
                 {
-                    cmd.SetComputeTextureParam(rcShader, rcMainKernelHandle, "_RCWB_HistoryColor", m_HistoryRT);
-                    int histW = m_HistoryRT.rt.width;
-                    int histH = m_HistoryRT.rt.height;
+                    cmd.SetComputeTextureParam(rcShader, rcMainKernelHandle, "_RCWB_HistoryColor", m_HistoryRT_Blur);
+                    int histW = m_HistoryRT_Blur.rt.width;
+                    int histH = m_HistoryRT_Blur.rt.height;
                     cmd.SetComputeVectorParam(rcShader, "_RCWB_HistoryColor_TexelSize", new Vector4(1f / histW, 1f / histH, histW, histH));
+                }
+                
+                if (m_HistoryRT_NoBlur != null)
+                {
+                    cmd.SetComputeTextureParam(rcShader, rcMainKernelHandle, "_RCWB_HistoryColor_NoBlur", m_HistoryRT_NoBlur);
+                    int histW = m_HistoryRT_NoBlur.rt.width;
+                    int histH = m_HistoryRT_NoBlur.rt.height;
+                    cmd.SetComputeVectorParam(rcShader, "_RCWB_HistoryColor_NoBlur_TexelSize", new Vector4(1f / histW, 1f / histH, histW, histH));
                 }
                 
                 cmd.SetComputeVectorParam(rcShader, "_CameraResolution_Full", new Vector2(fullWidth, fullHeight));
@@ -283,16 +308,44 @@ namespace RadianceCascadesWorldBVH
                 
                 cmd.EndSample("Invasion");
                 cmd.BeginSample("Dual Kawase Blur");
-                
+
                 ExecuteDualKawaseBlur(cmd, ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_0 : m_Rcwb_Handle_1, ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_1 : m_Rcwb_Handle_0, rcWidth, rcHeight, settings.blurIterations, settings.blurRadius);
                 ExecuteDualKawaseBlur(cmd, m_Rcwb_Direction, m_Rcwb_Direction_Blur, rcWidth, rcHeight, settings.blurIterations, settings.blurRadius);
                 cmd.EndSample("Dual Kawase Blur");
+                cmd.BeginSample("Temporal Accumulation");
+
+                var currentLightResultHandle = ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_0 : m_Rcwb_Handle_1;
+                var currentLightResultHandleBlur = ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_1 : m_Rcwb_Handle_0;
+                var accumulatedLightResultHandle = m_Rcwb_TemporalHandle_0;
+                var accumulatedLightResultHandleBlur = m_Rcwb_TemporalHandle_1;
+                int temporalAccumulateKernelHandle = rcShader.FindKernel("TemporalAccumulateMain");
+                cmd.SetComputeTextureParam(rcShader, temporalAccumulateKernelHandle, "_RCWB_TemporalCurrentNoBlur", currentLightResultHandle);
+                cmd.SetComputeTextureParam(rcShader, temporalAccumulateKernelHandle, "_RCWB_TemporalCurrentBlur", currentLightResultHandleBlur);
+                if (m_HistoryRT_Blur != null)
+                {
+                    cmd.SetComputeTextureParam(rcShader, temporalAccumulateKernelHandle, "_RCWB_HistoryColor", m_HistoryRT_Blur);
+                    int histW = m_HistoryRT_Blur.rt.width;
+                    int histH = m_HistoryRT_Blur.rt.height;
+                    cmd.SetComputeVectorParam(rcShader, "_RCWB_HistoryColor_TexelSize", new Vector4(1f / histW, 1f / histH, histW, histH));
+                }
+                if (m_HistoryRT_NoBlur != null)
+                {
+                    cmd.SetComputeTextureParam(rcShader, temporalAccumulateKernelHandle, "_RCWB_HistoryColor_NoBlur", m_HistoryRT_NoBlur);
+                    int histW = m_HistoryRT_NoBlur.rt.width;
+                    int histH = m_HistoryRT_NoBlur.rt.height;
+                    cmd.SetComputeVectorParam(rcShader, "_RCWB_HistoryColor_NoBlur_TexelSize", new Vector4(1f / histW, 1f / histH, histW, histH));
+                }
+                cmd.SetComputeFloatParam(rcShader, "_RCWB_HistoryWeight", historyWeight);
+                cmd.SetComputeTextureParam(rcShader, temporalAccumulateKernelHandle, "_RCWB_TemporalAccumulatedNoBlur", accumulatedLightResultHandle);
+                cmd.SetComputeTextureParam(rcShader, temporalAccumulateKernelHandle, "_RCWB_TemporalAccumulatedBlur", accumulatedLightResultHandleBlur);
+                cmd.DispatchCompute(rcShader, temporalAccumulateKernelHandle, (rcWidth + 7) / 8, (rcHeight + 7) / 8, 1);
+
+                cmd.EndSample("Temporal Accumulation");
                 cmd.BeginSample("After RCWB");
 
                 // 获取颜色结果
-                // 奇数次是handle0，偶数次是handle1
-                var lightResultHandle = ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_0 : m_Rcwb_Handle_1;
-                var lightResultHandleBlur = ((settings.cascadeCount & 1) == 1) ? m_Rcwb_Handle_1 : m_Rcwb_Handle_0;
+                var lightResultHandle = accumulatedLightResultHandle;
+                var lightResultHandleBlur = accumulatedLightResultHandleBlur;
                 
                 //RTHandle cameraColorTargetHandle = renderingData.cameraData.renderer.cameraColorTargetHandle;
                 //Blitter.BlitCameraTexture(cmd, m_Rcwb_Direction, cameraColorTargetHandle, 0f, true);
@@ -319,15 +372,28 @@ namespace RadianceCascadesWorldBVH
                 cmd.SetGlobalTexture("_RCWB_DirectionResult", m_Rcwb_Direction);
                 cmd.SetGlobalTexture("_RCWB_DirectionResult_Blur", m_Rcwb_Direction_Blur);
 
-                // 将本帧 RC light result 拷贝到 history RT，供下一帧的多次弹射使用
-                if (m_HistoryRT != null)
+                // 将本帧结果写入 Feature 共享字段，供 SceneColorHistoryPass 在 AfterRenderingTransparents 时写入 history
+                m_Feature.FrameLightResult     = lightResultHandle;
+                m_Feature.FrameLightResultBlur = lightResultHandleBlur;
+
+                // history RT 仍在此处绑定到全局（内容是上一帧，供本帧 RC kernel 采样用）
+                if (m_HistoryRT_Blur != null)
                 {
-                    Blitter.BlitCameraTexture(cmd, lightResultHandleBlur, m_HistoryRT);
-                    cmd.SetGlobalTexture("_RCWB_HistoryColor", m_HistoryRT);
-                    int hw = m_HistoryRT.rt.width;
-                    int hh = m_HistoryRT.rt.height;
+                    cmd.SetGlobalTexture("_RCWB_HistoryColor", m_HistoryRT_Blur);
+                    int hw = m_HistoryRT_Blur.rt.width;
+                    int hh = m_HistoryRT_Blur.rt.height;
                     cmd.SetGlobalVector("_RCWB_HistoryColor_TexelSize", new Vector4(1f / hw, 1f / hh, hw, hh));
                 }
+                if (m_HistoryRT_NoBlur != null)
+                {
+                    cmd.SetGlobalTexture("_RCWB_HistoryColor_NoBlur", m_HistoryRT_NoBlur);
+                    int hw = m_HistoryRT_NoBlur.rt.width;
+                    int hh = m_HistoryRT_NoBlur.rt.height;
+                    cmd.SetGlobalVector("_RCWB_HistoryColor_NoBlur_TexelSize", new Vector4(1f / hw, 1f / hh, hw, hh));
+                }
+
+                cmd.SetGlobalFloat("_RCWB_HistoryWeight", historyWeight);
+                
 
                 cmd.EndSample("After RCWB");
                 
@@ -415,31 +481,103 @@ namespace RadianceCascadesWorldBVH
                 cmd.DispatchCompute(rcShader, upKernel, (width + 7) / 8, (height + 7) / 8, 1);
             }
 
+            public RTHandle HistoryRTBlur => m_HistoryRT_Blur;
+            public RTHandle HistoryRTNoBlur => m_HistoryRT_NoBlur;
+
             public override void OnCameraCleanup(CommandBuffer cmd)
             {
             }
 
             public void Dispose()
             {
-                m_HistoryRT?.Release();
-                m_HistoryRT = null;
+                m_HistoryRT_Blur?.Release();
+                m_HistoryRT_Blur = null;
+                m_HistoryRT_NoBlur?.Release();
+                m_HistoryRT_NoBlur = null;
+                m_Rcwb_TemporalHandle_0?.Release();
+                m_Rcwb_TemporalHandle_0 = null;
+                m_Rcwb_TemporalHandle_1?.Release();
+                m_Rcwb_TemporalHandle_1 = null;
+            }
+        }
+
+        // =====================================================================
+        // Pass：在 Transparent 之后将本帧 RC 结果写入 history RT
+        // =====================================================================
+        class SceneColorHistoryPass : ScriptableRenderPass
+        {
+            private readonly RadianceCascadesWBFeature m_Feature;
+            private readonly RcwbRenderPass m_RcwbRenderPass;
+
+            public SceneColorHistoryPass(RadianceCascadesWBFeature feature, RcwbRenderPass rcwbRenderPass)
+            {
+                m_Feature = feature;
+                m_RcwbRenderPass = rcwbRenderPass;
+                renderPassEvent = RenderPassEvent.AfterRenderingTransparents;
+            }
+
+            public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
+            {
+            }
+
+            public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
+            {
+                if (m_Feature.FrameLightResult == null || m_Feature.FrameLightResultBlur == null)
+                {
+                    return;
+                }
+
+                CommandBuffer cmd = CommandBufferPool.Get("Scene Color History");
+
+                if (m_RcwbRenderPass.HistoryRTBlur != null)
+                {
+                    Blitter.BlitCameraTexture(cmd, m_Feature.FrameLightResultBlur, m_RcwbRenderPass.HistoryRTBlur);
+                    cmd.SetGlobalTexture("_RCWB_HistoryColor", m_RcwbRenderPass.HistoryRTBlur);
+                    int w = m_RcwbRenderPass.HistoryRTBlur.rt.width;
+                    int h = m_RcwbRenderPass.HistoryRTBlur.rt.height;
+                    cmd.SetGlobalVector("_RCWB_HistoryColor_TexelSize", new Vector4(1f / w, 1f / h, w, h));
+                }
+
+                if (m_RcwbRenderPass.HistoryRTNoBlur != null)
+                {
+                    Blitter.BlitCameraTexture(cmd, m_Feature.FrameLightResult, m_RcwbRenderPass.HistoryRTNoBlur);
+                    cmd.SetGlobalTexture("_RCWB_HistoryColor_NoBlur", m_RcwbRenderPass.HistoryRTNoBlur);
+                    int w = m_RcwbRenderPass.HistoryRTNoBlur.rt.width;
+                    int h = m_RcwbRenderPass.HistoryRTNoBlur.rt.height;
+                    cmd.SetGlobalVector("_RCWB_HistoryColor_NoBlur_TexelSize", new Vector4(1f / w, 1f / h, w, h));
+                }
+
+                context.ExecuteCommandBuffer(cmd);
+                CommandBufferPool.Release(cmd);
+            }
+
+            public override void OnCameraCleanup(CommandBuffer cmd) { }
+
+            public void Dispose()
+            {
             }
         }
 
         // =====================================================================
 
         RcwbRenderPass m_ScriptablePass;
+        SceneColorHistoryPass m_SceneColorHistoryPass;
 
         [Header("历史帧 (多次弹射)")]
         [Tooltip("历史帧 RT 相对 RC 分辨率的缩放系数。1.0 = 与 RC 同分辨率")]
         [Range(0.25f, 1f)]
         public float historyScale = 1.0f;
 
+        [Tooltip("历史帧 的 比重")] [Range(0.0f, 0.99f)]
+        public float historyWeight = .85f;
+
         /// <inheritdoc/>
         public override void Create()
         {
-            m_ScriptablePass = new RcwbRenderPass(settings, rcShader);
+            m_ScriptablePass = new RcwbRenderPass(settings, rcShader, this);
             m_ScriptablePass.renderPassEvent = RenderPassEvent.BeforeRenderingOpaques;
+
+            m_SceneColorHistoryPass = new SceneColorHistoryPass(this, m_ScriptablePass);
 
             ApplyShaderKeywords();
         }
@@ -456,14 +594,17 @@ namespace RadianceCascadesWorldBVH
 
             // 每帧同步可能在 Inspector 中调整的参数
             m_ScriptablePass.historyScale = historyScale;
+            m_ScriptablePass.historyWeight = historyWeight;
 
             // 只有 game 窗口会应用 renderPass
             renderer.EnqueuePass(m_ScriptablePass);
+            renderer.EnqueuePass(m_SceneColorHistoryPass);
         }
 
         protected override void Dispose(bool disposing)
         {
             m_ScriptablePass?.Dispose();
+            m_SceneColorHistoryPass?.Dispose();
         }
 
         private void ApplyShaderKeywords()

@@ -7,6 +7,7 @@
 
 #pragma kernel InvasionLightMain
 #pragma kernel InvasionDirectionMain
+#pragma kernel TemporalAccumulateMain
 #pragma multi_compile _ ENABLE_TRANSLUCENT_OBJECTS
 
 // 摄像机矩阵
@@ -14,6 +15,8 @@ float4x4 MatrixInvVP;
 float4x4 MatrixVP;
 float4x4 MatrixVP_Prev;
 float4 _RCWB_HistoryColor_TexelSize; // (1/w, 1/h, w, h)
+float4 _RCWB_HistoryColor_NoBlur_TexelSize; // (1/w, 1/h, w, h)
+float _RCWB_HistoryWeight;
 
 // 满分辨率
 uint2 _CameraResolution_Full;
@@ -59,6 +62,8 @@ TEXTURE2D(_RCWB_Atlas);
 SAMPLER(sampler_RCWB_Atlas);
 TEXTURE2D(_RCWB_HistoryColor);
 SAMPLER(sampler_RCWB_HistoryColor);
+TEXTURE2D(_RCWB_HistoryColor_NoBlur);
+SAMPLER(sampler_RCWB_HistoryColor_NoBlur);
 
 [numthreads(8,8,1)]
 void RadianceCascadeMain (uint3 id : SV_DispatchThreadID)
@@ -522,6 +527,68 @@ void InvasionLightMain (uint3 id : SV_DispatchThreadID){
 
 Texture2D<half2> _RCWB_Direction_NonInvasion;
 RWTexture2D<half2> _RCWB_Direction_Invasion;
+
+Texture2D<half4> _RCWB_TemporalCurrentNoBlur;
+Texture2D<half4> _RCWB_TemporalCurrentBlur;
+RWTexture2D<half4> _RCWB_TemporalAccumulatedNoBlur;
+RWTexture2D<half4> _RCWB_TemporalAccumulatedBlur;
+
+[numthreads(8, 8, 1)]
+void TemporalAccumulateMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _RCWB_CascadeResolution.x || id.y >= _RCWB_CascadeResolution.y)
+        return;
+
+    float2 pixelPos = id.xy + 0.5;
+    float2 currentUV = pixelPos / (float2)_RCWB_CascadeResolution;
+    float2 posWS = posPixel2World(pixelPos, (float2)_RCWB_CascadeResolution, MatrixInvVP);
+    bool isInsideSprite = IsInsideSprite(posWS);
+
+    half4 currentNoBlur = _RCWB_TemporalCurrentNoBlur.Load(int3(id.xy, 0));
+    half4 currentBlur = _RCWB_TemporalCurrentBlur.Load(int3(id.xy, 0));
+
+    half3 accumulatedNoBlur = currentNoBlur.rgb;
+    half3 accumulatedBlur = currentBlur.rgb;
+
+    float2 ndc = currentUV * 2.0 - 1.0;
+    #if UNITY_UV_STARTS_AT_TOP
+    ndc.y = -ndc.y;
+    #endif
+
+    float4 clipCur = float4(ndc, 0.0, 1.0);
+    float4 worldH = mul(MatrixInvVP, clipCur);
+    if (abs(worldH.w) > 1e-5)
+    {
+        float4 clipPrev = mul(MatrixVP_Prev, float4(worldH.xyz / worldH.w, 1.0));
+        if (abs(clipPrev.w) > 1e-5)
+        {
+            float2 ndcPrev = clipPrev.xy / clipPrev.w;
+            #if UNITY_UV_STARTS_AT_TOP
+            ndcPrev.y = -ndcPrev.y;
+            #endif
+
+            float2 historyUV = ndcPrev * 0.5 + 0.5;
+            if (all(historyUV > 0.0) && all(historyUV < 1.0))
+            {
+                if (isInsideSprite)
+                {
+                    historyUV = (floor(historyUV * _RCWB_HistoryColor_TexelSize.zw) + 0.5) * _RCWB_HistoryColor_TexelSize.xy;
+                    half3 historyBlur = SAMPLE_TEXTURE2D_LOD(_RCWB_HistoryColor, sampler_RCWB_HistoryColor, historyUV, 0).rgb;
+                    accumulatedBlur = lerp(currentBlur.rgb, historyBlur, _RCWB_HistoryWeight);
+                }
+                else
+                {
+                    historyUV = (floor(historyUV * _RCWB_HistoryColor_NoBlur_TexelSize.zw) + 0.5) * _RCWB_HistoryColor_NoBlur_TexelSize.xy;
+                    half3 historyNoBlur = SAMPLE_TEXTURE2D_LOD(_RCWB_HistoryColor_NoBlur, sampler_RCWB_HistoryColor_NoBlur, historyUV, 0).rgb;
+                    accumulatedNoBlur = lerp(currentNoBlur.rgb, historyNoBlur, _RCWB_HistoryWeight);
+                }
+            }
+        }
+    }
+
+    _RCWB_TemporalAccumulatedNoBlur[id.xy] = half4(accumulatedNoBlur, currentNoBlur.a);
+    _RCWB_TemporalAccumulatedBlur[id.xy] = half4(accumulatedBlur, currentBlur.a);
+}
 
 [numthreads(8, 8, 1)]
 void InvasionDirectionMain (uint3 id : SV_DispatchThreadID){
