@@ -230,6 +230,7 @@ namespace RadianceCascadesWorldBVH
                 cmd.SetComputeMatrixParam(rcShader, "MatrixVP", viewProjMatrix);
                 cmd.SetComputeMatrixParam(rcShader, "MatrixInvVP", viewProjMatrixInv);
                 cmd.SetComputeMatrixParam(rcShader, "MatrixVP_Prev", m_PrevViewProjMatrix);
+                cmd.SetComputeMatrixParam(rcShader, "MatrixInvVP_Prev", m_PrevViewProjMatrixInv);
 
                 // 显式绑定历史帧纹理到 compute kernel
                 if (m_HistoryRT_Blur != null)

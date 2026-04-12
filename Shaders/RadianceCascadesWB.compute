@@ -14,6 +14,7 @@
 float4x4 MatrixInvVP;
 float4x4 MatrixVP;
 float4x4 MatrixVP_Prev;
+float4x4 MatrixInvVP_Prev;
 float4 _RCWB_HistoryColor_TexelSize; // (1/w, 1/h, w, h)
 float4 _RCWB_HistoryColor_NoBlur_TexelSize; // (1/w, 1/h, w, h)
 float _RCWB_HistoryWeight;
@@ -559,7 +560,8 @@ void TemporalAccumulateMain(uint3 id : SV_DispatchThreadID)
     float4 worldH = mul(MatrixInvVP, clipCur);
     if (abs(worldH.w) > 1e-5)
     {
-        float4 clipPrev = mul(MatrixVP_Prev, float4(worldH.xyz / worldH.w, 1.0));
+        float3 worldPos = worldH.xyz / worldH.w;
+        float4 clipPrev = mul(MatrixVP_Prev, float4(worldPos, 1.0));
         if (abs(clipPrev.w) > 1e-5)
         {
             float2 ndcPrev = clipPrev.xy / clipPrev.w;
@@ -570,17 +572,24 @@ void TemporalAccumulateMain(uint3 id : SV_DispatchThreadID)
             float2 historyUV = ndcPrev * 0.5 + 0.5;
             if (all(historyUV > 0.0) && all(historyUV < 1.0))
             {
-                if (isInsideSprite)
+                float2 prevPixelPos = historyUV * (float2)_RCWB_CascadeResolution;
+                float2 prevPosWS = posPixel2World(prevPixelPos, (float2)_RCWB_CascadeResolution, MatrixInvVP_Prev);
+                bool wasInsideSprite = IsInsideSprite(prevPosWS);
+
+                if (wasInsideSprite == isInsideSprite)
                 {
-                    historyUV = (floor(historyUV * _RCWB_HistoryColor_TexelSize.zw) + 0.5) * _RCWB_HistoryColor_TexelSize.xy;
-                    half3 historyBlur = SAMPLE_TEXTURE2D_LOD(_RCWB_HistoryColor, sampler_RCWB_HistoryColor, historyUV, 0).rgb;
-                    accumulatedBlur = lerp(currentBlur.rgb, historyBlur, _RCWB_HistoryWeight);
-                }
-                else
-                {
-                    historyUV = (floor(historyUV * _RCWB_HistoryColor_NoBlur_TexelSize.zw) + 0.5) * _RCWB_HistoryColor_NoBlur_TexelSize.xy;
-                    half3 historyNoBlur = SAMPLE_TEXTURE2D_LOD(_RCWB_HistoryColor_NoBlur, sampler_RCWB_HistoryColor_NoBlur, historyUV, 0).rgb;
-                    accumulatedNoBlur = lerp(currentNoBlur.rgb, historyNoBlur, _RCWB_HistoryWeight);
+                    if (isInsideSprite)
+                    {
+                        historyUV = (floor(historyUV * _RCWB_HistoryColor_TexelSize.zw) + 0.5) * _RCWB_HistoryColor_TexelSize.xy;
+                        half3 historyBlur = SAMPLE_TEXTURE2D_LOD(_RCWB_HistoryColor, sampler_RCWB_HistoryColor, historyUV, 0).rgb;
+                        accumulatedBlur = lerp(currentBlur.rgb, historyBlur, _RCWB_HistoryWeight);
+                    }
+                    else
+                    {
+                        historyUV = (floor(historyUV * _RCWB_HistoryColor_NoBlur_TexelSize.zw) + 0.5) * _RCWB_HistoryColor_NoBlur_TexelSize.xy;
+                        half3 historyNoBlur = SAMPLE_TEXTURE2D_LOD(_RCWB_HistoryColor_NoBlur, sampler_RCWB_HistoryColor_NoBlur, historyUV, 0).rgb;
+                        accumulatedNoBlur = lerp(currentNoBlur.rgb, historyNoBlur, _RCWB_HistoryWeight);
+                    }
                 }
             }
         }
