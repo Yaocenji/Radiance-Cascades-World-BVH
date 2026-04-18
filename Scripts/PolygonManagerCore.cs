@@ -338,6 +338,7 @@ namespace RadianceCascadesWorldBVH
         
         public List<edgeBVH> Edges => edges;
         public List<MaterialData> Materials => materialData;
+        public List<RCWBObject> RcwObjects => rcwObjects;
         public PolygonBVHConstructorAccelerated BvhConstructor => bvhConstructorAccelerated;
         public int RegisteredObjectCount => rcwObjects.Count;
 
