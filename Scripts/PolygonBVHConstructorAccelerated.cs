@@ -130,13 +130,25 @@ namespace RadianceCascadesWorldBVH
 
                         IReadOnlyList<Vector2> pts = loop.PointsLocal;
                         int pointCount = pts.Count;
-                        int edgeCount  = loop.Closed ? pointCount : pointCount - 1;
 
+                        // 转换到世界空间
+                        var world = new Vector2[pointCount];
+                        for (int j = 0; j < pointCount; j++)
+                        {
+                            Vector3 w = t.TransformPoint(pts[j].x, pts[j].y, 0f);
+                            world[j] = new Vector2(w.x, w.y);
+                        }
+
+                        // 负 scale 导致手性翻转（CCW→CW），修正为 CCW
+                        if (ComputeSignedArea(world) < 0f)
+                            System.Array.Reverse(world);
+
+                        int edgeCount = loop.Closed ? pointCount : pointCount - 1;
                         for (int j = 0; j < edgeCount; j++)
                         {
                             edgeBVH edge = new edgeBVH();
-                            edge.start  = t.TransformPoint(pts[j].x, pts[j].y, 0f);
-                            edge.end    = t.TransformPoint(pts[(j + 1) % pointCount].x, pts[(j + 1) % pointCount].y, 0f);
+                            edge.start  = world[j];
+                            edge.end    = world[(j + 1) % pointCount];
                             edge.matIdx = sidx;
                             edges.Add(edge);
                         }
@@ -148,17 +160,24 @@ namespace RadianceCascadesWorldBVH
                     int loopCount = spriteRenderer.sprite.GetPhysicsShapeCount();
                     for (int i = 0; i < loopCount; i++)
                     {
-                        List<Vector2> points = new List<Vector2>();
-                        int pointCount = spriteRenderer.sprite.GetPhysicsShape(i, points);
+                        var pts = new List<Vector2>();
+                        int pointCount = spriteRenderer.sprite.GetPhysicsShape(i, pts);
 
+                        var world = new Vector2[pointCount];
                         for (int j = 0; j < pointCount; j++)
-                            points[j] = spriteRenderer.transform.TransformPoint(points[j].x, points[j].y, 0f);
+                        {
+                            Vector3 w = spriteRenderer.transform.TransformPoint(pts[j].x, pts[j].y, 0f);
+                            world[j] = new Vector2(w.x, w.y);
+                        }
+
+                        if (ComputeSignedArea(world) < 0f)
+                            System.Array.Reverse(world);
 
                         for (int j = 0; j < pointCount; j++)
                         {
                             edgeBVH edge = new edgeBVH();
-                            edge.start  = points[j];
-                            edge.end    = points[(j + 1) % pointCount];
+                            edge.start  = world[j];
+                            edge.end    = world[(j + 1) % pointCount];
                             edge.matIdx = sidx;
                             edges.Add(edge);
                         }
@@ -437,7 +456,22 @@ namespace RadianceCascadesWorldBVH
                 }
             }
         }
-        
+
+        // 计算世界空间多边形有符号面积（叉积之和）
+        // > 0 = CCW，< 0 = CW（负 scale 翻转后）
+        private static float ComputeSignedArea(Vector2[] pts)
+        {
+            float area = 0f;
+            int n = pts.Length;
+            for (int i = 0; i < n; i++)
+            {
+                Vector2 a = pts[i];
+                Vector2 b = pts[(i + 1) % n];
+                area += a.x * b.y - b.x * a.y;
+            }
+            return area;
+        }
+
         public void Dispose()
         {
             if (_disposed) return;

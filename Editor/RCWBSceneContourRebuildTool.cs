@@ -538,15 +538,31 @@ namespace RadianceCascadesWorldBVH.Editor
             var scene = obj.gameObject.scene;
             if (string.IsNullOrEmpty(scene.path)) return null;
 
-            string sceneDir  = Path.GetDirectoryName(scene.path).Replace('\\', '/');
-            string sceneName = Path.GetFileNameWithoutExtension(scene.path);
-            string goName    = obj.gameObject.name;
+            string sceneDir    = Path.GetDirectoryName(scene.path).Replace('\\', '/');
+            string sceneName   = Path.GetFileNameWithoutExtension(scene.path);
+            string uniqueName  = SanitizeFileName(GetHierarchyPath(obj.gameObject));
 
             var settings = PolygonManagerSettings.Instance;
             if (settings != null && !string.IsNullOrEmpty(settings.defaultProfileFolder))
-                return $"{settings.defaultProfileFolder}/{sceneName}/{goName}_ContourProfile.asset";
+                return $"{settings.defaultProfileFolder}/{sceneName}/{uniqueName}_ContourProfile.asset";
             else
-                return $"{sceneDir}/{sceneName}_RCWBProfiles/{goName}_ContourProfile.asset";
+                return $"{sceneDir}/{sceneName}_RCWBProfiles/{uniqueName}_ContourProfile.asset";
+        }
+
+        private static string GetHierarchyPath(GameObject go)
+        {
+            var parts = new List<string>();
+            Transform t = go.transform;
+            while (t != null) { parts.Add(t.name); t = t.parent; }
+            parts.Reverse();
+            return string.Join("__", parts);
+        }
+
+        private static string SanitizeFileName(string name)
+        {
+            foreach (char c in Path.GetInvalidFileNameChars())
+                name = name.Replace(c, '_');
+            return name;
         }
 
         private static void CreateFolderRecursive(string path)

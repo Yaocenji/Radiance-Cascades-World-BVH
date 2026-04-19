@@ -172,6 +172,14 @@ namespace RadianceCascadesWorldBVH
         /// </summary>
         private void LoadSettings()
         {
+            // 优先使用场景内的 RCWBSceneSettings，找不到再退回全局 Settings
+            var sceneSettings = UnityEngine.Object.FindObjectOfType<RCWBSceneSettings>();
+            if (sceneSettings != null)
+            {
+                SceneAABB = sceneSettings.sceneAABB;
+                return;
+            }
+
             var settings = PolygonManagerSettings.Instance;
             if (settings != null)
             {
